@@ -1,60 +1,39 @@
+
 # -*- coding: utf-8 -*-
 
-
-
 import os
-
 import csv
-
 import sqlite3
-
 import logging
-
+import sys
 from datetime import datetime, date
-
 from enum import Enum, auto
-
 from typing import List, Dict, Optional
-
 import re
 
-
-
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-
-from telegram.ext import (
-
-    Application,
-
-    CommandHandler,
-
-    MessageHandler,
-
-    ConversationHandler,
-
-    filters,
-
-    ContextTypes,
-
-    PicklePersistence,
-
-)
-
-
-
+# =========================
+# Configuration - مع معالجة الأخطاء
 # =========================
 
-# Configuration
-
-# =========================
-
-
-
+# الحصول على التوكن من متغيرات البيئة
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_USER = os.getenv("ADMIN_USER")
-ADMIN_PASS = os.getenv("ADMIN_PASS")
 
+# التحقق من وجود التوكن
+if not TOKEN:
+    print("❌ خطأ: لم يتم تعيين BOT_TOKEN في متغيرات البيئة")
+    print("📝 كيفية الإصلاح:")
+    print("1. اذهب إلى Render → خدماتك → Environment")
+    print("2. أضف متغير: BOT_TOKEN=رقم_التوكن_الخاص_بك")
+    print("3. أعد نشر التطبيق")
+    sys.exit(1)
 
+# بيانات الأدمن (يمكن تغييرها لاحقاً)
+ADMIN_USER = os.getenv("ADMIN_USER", "Osman")
+ADMIN_PASS = os.getenv("ADMIN_PASS", "2580")
+
+print(f"✅ تم تحميل التوكن بنجاح - البوت جاهز للتشغيل")
+
+# باقي الكود يبقى كما هو...
 
 # ملفات CSV
 
