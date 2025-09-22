@@ -1,39 +1,82 @@
-
 # -*- coding: utf-8 -*-
 
+
+
 import os
+
 import csv
+
 import sqlite3
+
 import logging
+
 import sys
+
 from datetime import datetime, date
+
 from enum import Enum, auto
+
 from typing import List, Dict, Optional
+
 import re
 
-# =========================
-# Configuration - مع معالجة الأخطاء
+
+
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+
+from telegram.ext import (
+
+    Application,
+
+    CommandHandler,
+
+    MessageHandler,
+
+    ConversationHandler,
+
+    filters,
+
+    CallbackContext,  # ✅ الإصلاح هنا
+
+    PicklePersistence,
+
+)
+
+
+
 # =========================
 
-# الحصول على التوكن من متغيرات البيئة
+# Configuration
+
+# =========================
+
+
+
 TOKEN = os.getenv("BOT_TOKEN")
 
-# التحقق من وجود التوكن
+
+
 if not TOKEN:
+
     print("❌ خطأ: لم يتم تعيين BOT_TOKEN في متغيرات البيئة")
-    print("📝 كيفية الإصلاح:")
-    print("1. اذهب إلى Render → خدماتك → Environment")
-    print("2. أضف متغير: BOT_TOKEN=رقم_التوكن_الخاص_بك")
-    print("3. أعد نشر التطبيق")
+
     sys.exit(1)
 
-# بيانات الأدمن (يمكن تغييرها لاحقاً)
+
+
 ADMIN_USER = os.getenv("ADMIN_USER", "Osman")
+
 ADMIN_PASS = os.getenv("ADMIN_PASS", "2580")
 
-print(f"✅ تم تحميل التوكن بنجاح - البوت جاهز للتشغيل")
+
+
+print("✅ تم تحميل التوكن بنجاح")
+
+
 
 # باقي الكود يبقى كما هو...
+
+
 
 # ملفات CSV
 
@@ -1179,7 +1222,7 @@ def add_user_if_not_exists(user_id: int, username: str):
 
 
 
-def validate_admin_session(context: ContextTypes.DEFAULT_TYPE) -> bool:
+def validate_admin_session(context: CallbackContext) -> bool:
 
     user_type = context.user_data.get("user_type")
 
@@ -1229,7 +1272,7 @@ def format_phone_number(phone: str) -> str:
 
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: CallbackContext):
 
     user = update.effective_user
 
@@ -1255,7 +1298,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def go_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def go_main_menu(update: Update, context: CallbackContext):
 
     await update.message.reply_text("⬅️ رجعت للقائمة الرئيسية.", reply_markup=main_menu_kb())
 
@@ -1263,7 +1306,7 @@ async def go_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def about(update: Update, context: CallbackContext):
 
     about_text = (
 
@@ -1283,25 +1326,25 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def contact_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def contact_menu(update: Update, context: CallbackContext):
 
     await update.message.reply_text("📞 اختر وسيلة التواصل:", reply_markup=contact_kb())
 
 
 
-async def contact_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def contact_phone(update: Update, context: CallbackContext):
 
     await update.message.reply_text("☎️ رقم الاتصال: 00201000098572\n(متاح للاتصال خلال ساعات النهار)", reply_markup=contact_kb())
 
 
 
-async def contact_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def contact_email(update: Update, context: CallbackContext):
 
     await update.message.reply_text("📧 البريد: shareef@sudanaswan.com\nسوف نرد خلال 24 ساعة", reply_markup=contact_kb())
 
 
 
-async def contact_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def contact_whatsapp(update: Update, context: CallbackContext):
 
     phone = format_phone_number("00201000098572")
 
@@ -1313,7 +1356,7 @@ async def contact_whatsapp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def contact_facebook(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def contact_facebook(update: Update, context: CallbackContext):
 
     facebook_link = "https://www.facebook.com/share/1CSfqcbtid/"
 
@@ -1323,13 +1366,13 @@ async def contact_facebook(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def contact_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def contact_back(update: Update, context: CallbackContext):
 
     await go_main_menu(update, context)
 
 
 
-async def show_admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_admin_login(update: Update, context: CallbackContext):
 
     """عرض خيار دخول الأدمن عند استلام علامة @"""
 
@@ -1351,7 +1394,7 @@ async def show_admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def register_start(update: Update, context: CallbackContext):
 
     await update.message.reply_text("✍️ أدخل اسمك الثلاثي:", reply_markup=cancel_or_back_kb())
 
@@ -1359,7 +1402,7 @@ async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def ask_passport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_passport(update: Update, context: CallbackContext):
 
     name = update.message.text.strip()
 
@@ -1379,7 +1422,7 @@ async def ask_passport(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_phone(update: Update, context: CallbackContext):
 
     passport = update.message.text.strip()
 
@@ -1423,7 +1466,7 @@ async def ask_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def ask_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_address(update: Update, context: CallbackContext):
 
     phone = update.message.text.strip()
 
@@ -1449,7 +1492,7 @@ async def ask_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def ask_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_role(update: Update, context: CallbackContext):
 
     address = update.message.text.strip()
 
@@ -1475,7 +1518,7 @@ async def ask_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def ask_family_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_family_members(update: Update, context: CallbackContext):
 
     role = update.message.text.strip()
 
@@ -1501,7 +1544,7 @@ async def ask_family_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 
-async def confirm_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def confirm_registration(update: Update, context: CallbackContext):
 
     family_members = update.message.text.strip()
 
@@ -1593,7 +1636,7 @@ async def confirm_registration(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 
-async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_registration(update: Update, context: CallbackContext):
 
     await go_main_menu(update, context)
 
@@ -1611,7 +1654,7 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 
-async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_login(update: Update, context: CallbackContext):
 
     await update.message.reply_text("👤 أدخل اسم المستخدم:", reply_markup=cancel_or_back_kb())
 
@@ -1619,7 +1662,7 @@ async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def admin_get_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_get_user(update: Update, context: CallbackContext):
 
     username = update.message.text.strip()
 
@@ -1639,7 +1682,7 @@ async def admin_get_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def admin_get_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_get_pass(update: Update, context: CallbackContext):
 
     password = update.message.text.strip()
 
@@ -1689,7 +1732,7 @@ async def admin_get_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_menu_handler(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context):
 
@@ -1807,7 +1850,7 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 
-async def account_management_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def account_management_handler(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -1849,7 +1892,7 @@ async def account_management_handler(update: Update, context: ContextTypes.DEFAU
 
 
 
-async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_broadcast(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -1917,7 +1960,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def manage_services_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def manage_services_menu(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -2059,7 +2102,7 @@ async def manage_services_menu(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 
-async def admin_add_service_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_add_service_start(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context):
 
@@ -2101,7 +2144,7 @@ async def admin_add_service_start(update: Update, context: ContextTypes.DEFAULT_
 
 
 
-async def admin_delete_service_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_delete_service_start(update: Update, context: CallbackContext):
 
     services = get_services_from_db()
 
@@ -2147,7 +2190,7 @@ async def admin_delete_service_start(update: Update, context: ContextTypes.DEFAU
 
 # معالجة كشوفات الخدمات
 
-async def service_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def service_report_handler(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -2247,7 +2290,7 @@ async def service_report_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 # معالج اختيار خدمة للكشف
 
-async def select_service_for_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def select_service_for_report_handler(update: Update, context: CallbackContext):
 
     selected_service = update.message.text.strip()
 
@@ -2321,7 +2364,7 @@ async def select_service_for_report_handler(update: Update, context: ContextType
 
 # معالجة حذف كشوف الخدمات
 
-async def delete_service_report_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def delete_service_report_handler(update: Update, context: CallbackContext):
 
     text = update.message.text
 
@@ -2375,7 +2418,7 @@ async def delete_service_report_handler(update: Update, context: ContextTypes.DE
 
 # معالج اختيار خدمة للحذف
 
-async def select_service_for_delete_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def select_service_for_delete_handler(update: Update, context: CallbackContext):
 
     selected_service = update.message.text.strip()
 
@@ -2419,7 +2462,7 @@ async def select_service_for_delete_handler(update: Update, context: ContextType
 
 # تأكيد حذف خدمة واحدة
 
-async def confirm_delete_single_service_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def confirm_delete_single_service_handler(update: Update, context: CallbackContext):
 
     text = update.message.text
 
@@ -2465,7 +2508,7 @@ async def confirm_delete_single_service_handler(update: Update, context: Context
 
 # تأكيد حذف جميع كشوف الخدمات
 
-async def confirm_delete_all_services_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def confirm_delete_all_services_handler(update: Update, context: CallbackContext):
 
     text = update.message.text
 
@@ -2511,7 +2554,7 @@ async def confirm_delete_all_services_handler(update: Update, context: ContextTy
 
 
 
-async def services_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def services_menu_start(update: Update, context: CallbackContext):
 
     services = get_services_from_db()
 
@@ -2529,7 +2572,7 @@ async def services_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 
-async def services_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def services_menu_handler(update: Update, context: CallbackContext):
 
     choice = update.message.text.strip()
 
@@ -2571,7 +2614,7 @@ async def services_menu_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 
-async def service_enter_passport(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def service_enter_passport(update: Update, context: CallbackContext):
 
     passport = update.message.text.strip()
 
@@ -2661,7 +2704,7 @@ async def service_enter_passport(update: Update, context: ContextTypes.DEFAULT_T
 
 
 
-async def admin_stats_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_stats_choice_handler(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -2813,7 +2856,7 @@ async def admin_stats_choice_handler(update: Update, context: ContextTypes.DEFAU
 
 
 
-async def admin_delete_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_delete_stats(update: Update, context: CallbackContext):
 
     if update.message.text == "✅ نعم، احذف الملخص":
 
@@ -2847,7 +2890,7 @@ async def admin_delete_stats(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 
-async def manage_members_data_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def manage_members_data_menu(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -2973,7 +3016,7 @@ async def manage_members_data_menu(update: Update, context: ContextTypes.DEFAULT
 
 
 
-async def admin_clear_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_clear_members(update: Update, context: CallbackContext):
 
     if update.message.text == "✅ نعم، احذف بيانات المسجلين":
 
@@ -3001,7 +3044,7 @@ async def admin_clear_members(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 
-async def manage_assistants_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def manage_assistants_menu(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -3141,7 +3184,7 @@ async def manage_assistants_menu(update: Update, context: ContextTypes.DEFAULT_T
 
 
 
-async def create_assistant_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def create_assistant_user(update: Update, context: CallbackContext):
 
     new_user = update.message.text.strip()
 
@@ -3171,7 +3214,7 @@ async def create_assistant_user(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 
-async def create_assistant_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def create_assistant_pass(update: Update, context: CallbackContext):
 
     new_pass = update.message.text.strip()
 
@@ -3207,7 +3250,7 @@ async def create_assistant_pass(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 
-async def delete_assistant_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def delete_assistant_menu(update: Update, context: CallbackContext):
 
     assistant_to_delete = update.message.text.strip()
 
@@ -3239,7 +3282,7 @@ async def delete_assistant_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 
-async def get_new_password_for_assistant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_new_password_for_assistant(update: Update, context: CallbackContext):
 
     selected_user = update.message.text.strip()
 
@@ -3259,7 +3302,7 @@ async def get_new_password_for_assistant(update: Update, context: ContextTypes.D
 
 
 
-async def update_assistant_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def update_assistant_password(update: Update, context: CallbackContext):
 
     new_password = update.message.text.strip()
 
@@ -3313,7 +3356,7 @@ async def update_assistant_password(update: Update, context: ContextTypes.DEFAUL
 
 
 
-async def manage_delivery_reports_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def manage_delivery_reports_menu(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context) or context.user_data.get("user_type") != "main_admin":
 
@@ -3417,7 +3460,7 @@ async def manage_delivery_reports_menu(update: Update, context: ContextTypes.DEF
 
 
 
-async def delete_delivery_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def delete_delivery_reports(update: Update, context: CallbackContext):
 
     if update.message.text == "✅ نعم، احذف الكشوفات":
 
@@ -3445,7 +3488,7 @@ async def delete_delivery_reports(update: Update, context: ContextTypes.DEFAULT_
 
 
 
-async def record_delivery_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def record_delivery_process(update: Update, context: CallbackContext):
 
     passport = update.message.text.strip()
 
@@ -3521,7 +3564,7 @@ async def record_delivery_process(update: Update, context: ContextTypes.DEFAULT_
 
 
 
-async def record_delivery_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def record_delivery_confirm(update: Update, context: CallbackContext):
 
     text = update.message.text.strip()
 
@@ -3575,7 +3618,7 @@ async def record_delivery_confirm(update: Update, context: ContextTypes.DEFAULT_
 
 
 
-async def assistant_view_deliveries_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def assistant_view_deliveries_handler(update: Update, context: CallbackContext):
 
     if not validate_admin_session(context):
 
@@ -3691,7 +3734,7 @@ async def assistant_view_deliveries_handler(update: Update, context: ContextType
 
 
 
-async def back_to_admin_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def back_to_admin_only(update: Update, context: CallbackContext):
 
     if context.user_data.get("user_type") == "main_admin":
 
@@ -3929,46 +3972,8 @@ def main():
 
     application.run_polling()
 
-# =========================
-# Simple main function for Render
-# =========================
 
-def main():
-    """الدالة الرئيسية المبسطة للتشغيل على Render"""
-    try:
-        print("🚀 بدء تشغيل بوت الجالية السودانية...")
-        
-        # التحقق من التوكن
-        if not TOKEN or TOKEN == "8342715370:AAGgUMEKd1E0u3hi_u28jMNrZA9RD0v0WXo":
-            print("❌ خطأ: يجب تعيين BOT_TOKEN في متغيرات البيئة")
-            return
-        
-        # تهيئة التطبيق
-        init_services_db()
-        print("✅ تم تهيئة قاعدة البيانات")
-        
-        # إنشاء التطبيق
-        persistence = PicklePersistence(filepath="conversationbot")
-        application = Application.builder().token(TOKEN).persistence(persistence).build()
-        
-        # إضافة handlers مبسطة
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.Text(["📝 التسجيل"]), register_start))
-        application.add_handler(MessageHandler(filters.Text(["📌 الخدمات"]), services_menu_start))
-        application.add_handler(MessageHandler(filters.Text(["🔑 دخول"]), admin_login))
-        application.add_handler(MessageHandler(filters.Text(["ℹ️ عن المنصة"]), about))
-        application.add_handler(MessageHandler(filters.Text(["📞 تواصل معنا"]), contact_menu))
-        
-        print("✅ تم تحميل جميع الـ handlers")
-        print("🤖 البوت جاهز للعمل...")
-        
-        # بدء البوت
-        application.run_polling()
-        
-    except Exception as e:
-        print(f"❌ خطأ في التشغيل: {e}")
-        import traceback
-        traceback.print_exc()
 
 if __name__ == "__main__":
+
     main()
