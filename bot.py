@@ -3952,8 +3952,46 @@ def main():
 
     application.run_polling()
 
+# =========================
+# Simple main function for Render
+# =========================
 
+def main():
+    """الدالة الرئيسية المبسطة للتشغيل على Render"""
+    try:
+        print("🚀 بدء تشغيل بوت الجالية السودانية...")
+        
+        # التحقق من التوكن
+        if not TOKEN or TOKEN == "8342715370:AAGgUMEKd1E0u3hi_u28jMNrZA9RD0v0WXo":
+            print("❌ خطأ: يجب تعيين BOT_TOKEN في متغيرات البيئة")
+            return
+        
+        # تهيئة التطبيق
+        init_services_db()
+        print("✅ تم تهيئة قاعدة البيانات")
+        
+        # إنشاء التطبيق
+        persistence = PicklePersistence(filepath="conversationbot")
+        application = Application.builder().token(TOKEN).persistence(persistence).build()
+        
+        # إضافة handlers مبسطة
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(filters.Text(["📝 التسجيل"]), register_start))
+        application.add_handler(MessageHandler(filters.Text(["📌 الخدمات"]), services_menu_start))
+        application.add_handler(MessageHandler(filters.Text(["🔑 دخول"]), admin_login))
+        application.add_handler(MessageHandler(filters.Text(["ℹ️ عن المنصة"]), about))
+        application.add_handler(MessageHandler(filters.Text(["📞 تواصل معنا"]), contact_menu))
+        
+        print("✅ تم تحميل جميع الـ handlers")
+        print("🤖 البوت جاهز للعمل...")
+        
+        # بدء البوت
+        application.run_polling()
+        
+    except Exception as e:
+        print(f"❌ خطأ في التشغيل: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-
     main()
