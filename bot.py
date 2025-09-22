@@ -50,9 +50,9 @@ from telegram.ext import (
 
 
 
-TOKEN = os.getenv("BOT_TOKEN", "8342715370:AAGgUMEKd1E0u3hi_u28jMNrZA9RD0v0WXo")
-ADMIN_USER = os.getenv("ADMIN_USER", "Osman")
-ADMIN_PASS = os.getenv("ADMIN_PASS", "2580")
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_USER = os.getenv("ADMIN_USER")
+ADMIN_PASS = os.getenv("ADMIN_PASS")
 
 
 
