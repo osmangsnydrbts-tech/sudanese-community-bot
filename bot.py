@@ -25,7 +25,7 @@ from telegram.ext import (
 # Configuration
 # =========================
 
-TOKEN = os.getenv("8342715370:AAGgUMEKd1E0u3hi_u28jMNrZA9RD0v0WXo")
+TOKEN = "8342715370:AAGgUMEKd1E0u3hi_u28jMNrZA9RD0v0WXo"
 
 if not TOKEN:
     print("❌ خطأ: لم يتم تعيين BOT_TOKEN في متغيرات البيئة")
