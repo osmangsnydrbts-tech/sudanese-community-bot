@@ -1,18 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import os
-import csv
-import sqlite3
 import logging
 import sys
-from datetime import datetime, date
 from enum import Enum, auto
-from typing import List, Dict, Optional
-import re
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
-    Application,  # ✅ هذا هو المهم
+    Application,
     CommandHandler,
     MessageHandler,
     ConversationHandler,
@@ -132,51 +127,62 @@ async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return States.ADMIN_PANEL
 
 # =========================
-# الدالة الرئيسية - المهمة!
+# الدالة الرئيسية - الإصدار الآمن
 # =========================
 
 def main():
     """الدالة الرئيسية لتشغيل البوت"""
     
     try:
-        # ✅ استخدام Application بدلاً من Updater
-        persistence = PicklePersistence(filepath="conversationbot")
-        application = Application.builder().token(TOKEN).persistence(persistence).build()
+        # التحقق من الإصدار أولاً
+        import telegram
+        print(f"📦 إصدار python-telegram-bot: {telegram.__version__}")
         
-        # إنشاء محادثة متقدمة
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                States.MAIN_MENU: [
-                    MessageHandler(filters.Regex("^تسجيل الدخول كمسؤول$"), handle_admin_login),
-                    MessageHandler(filters.Regex("^المساعدة$"), help_command),
-                ],
-                States.WAITING_FOR_CREDENTIALS: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_credentials),
-                ],
-                States.ADMIN_PANEL: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_panel),
-                ],
-            },
-            fallbacks=[CommandHandler('cancel', cancel), CommandHandler('help', help_command)],
-            name="expense_bot",
-            persistent=True,
-        )
-        
-        # إضافة المعالجات
-        application.add_handler(conv_handler)
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("cancel", cancel))
-        
-        # بدء البوت
-        print("🤖 بدء تشغيل بوت إدارة المصروفات...")
-        print("✅ البوت يعمل الآن! اضغط Ctrl+C لإيقافه")
-        
-        # ✅ استخدام run_polling من Application
-        application.run_polling()
-        
+        # إذا كان الإصدار 20.x أو أعلى، استخدم Application
+        if int(telegram.__version__.split('.')[0]) >= 20:
+            print("✅ استخدام Application (الإصدار 20.x)")
+            
+            # إنشاء Application بدون persistence أولاً للتجربة
+            application = Application.builder().token(TOKEN).build()
+            
+            # إنشاء محادثة متقدمة
+            conv_handler = ConversationHandler(
+                entry_points=[CommandHandler('start', start)],
+                states={
+                    States.MAIN_MENU: [
+                        MessageHandler(filters.Regex("^تسجيل الدخول كمسؤول$"), handle_admin_login),
+                        MessageHandler(filters.Regex("^المساعدة$"), help_command),
+                    ],
+                    States.WAITING_FOR_CREDENTIALS: [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_credentials),
+                    ],
+                    States.ADMIN_PANEL: [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_panel),
+                    ],
+                },
+                fallbacks=[CommandHandler('cancel', cancel), CommandHandler('help', help_command)],
+                name="expense_bot",
+            )
+            
+            # إضافة المعالجات
+            application.add_handler(conv_handler)
+            application.add_handler(CommandHandler("help", help_command))
+            application.add_handler(CommandHandler("cancel", cancel))
+            
+            # بدء البوت
+            print("🤖 بدء تشغيل بوت إدارة المصروفات...")
+            print("✅ البوت يعمل الآن! اضغط Ctrl+C لإيقافه")
+            
+            application.run_polling()
+            
+        else:
+            print("❌ يتطلب الإصدار 20.x أو أعلى")
+            sys.exit(1)
+            
     except Exception as e:
         logger.error(f"❌ خطأ في تشغيل البوت: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == '__main__':
