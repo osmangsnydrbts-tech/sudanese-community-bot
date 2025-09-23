@@ -12,7 +12,7 @@ import re
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
-    Application,
+    Application,  # ✅ هذا هو المهم
     CommandHandler,
     MessageHandler,
     ConversationHandler,
@@ -25,7 +25,7 @@ from telegram.ext import (
 # Configuration
 # =========================
 
-TOKEN = "8342715370:AAGgUMEKd1E0u3hi_u28jMNrZA9RD0v0WXo"
+TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
     print("❌ خطأ: لم يتم تعيين BOT_TOKEN في متغيرات البيئة")
@@ -52,7 +52,6 @@ class States(Enum):
     MAIN_MENU = auto()
     WAITING_FOR_CREDENTIALS = auto()
     ADMIN_PANEL = auto()
-    # أضف باقي الحالات حسب احتياجك
 
 # =========================
 # دوال المعالجة
@@ -87,7 +86,6 @@ async def handle_credentials(update: Update, context: ContextTypes.DEFAULT_TYPE)
         password = password.strip()
         
         if username == ADMIN_USER and password == ADMIN_PASS:
-            # تسجيل الدخول ناجح
             admin_keyboard = [
                 [KeyboardButton("عرض الإحصائيات"), KeyboardButton("إضافة مصروف")],
                 [KeyboardButton("تصدير البيانات"), KeyboardButton("العودة للرئيسية")]
@@ -115,54 +113,71 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /start - بدء المحادثة
 /help - عرض هذه المساعدة
 /cancel - إلغاء العملية الحالية
-
-**لوحة المسؤول:**
-- تسجيل الدخول كمسؤول
-- إدارة المصروفات
-- عرض الإحصائيات
 """
     await update.message.reply_text(help_text)
 
+async def handle_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة أوامر لوحة المسؤول"""
+    text = update.message.text
+    
+    if text == "العودة للرئيسية":
+        return await start(update, context)
+    elif text == "عرض الإحصائيات":
+        await update.message.reply_text("📊 الإحصائيات قريباً...")
+    elif text == "إضافة مصروف":
+        await update.message.reply_text("💰 إضافة مصروف قريباً...")
+    elif text == "تصدير البيانات":
+        await update.message.reply_text("📤 تصدير البيانات قريباً...")
+    
+    return States.ADMIN_PANEL
+
 # =========================
-# الدالة الرئيسية
+# الدالة الرئيسية - المهمة!
 # =========================
 
 def main():
     """الدالة الرئيسية لتشغيل البوت"""
     
-    # إنشاء Application بدلاً من Updater
-    persistence = PicklePersistence(filepath="conversationbot")
-    application = Application.builder().token(TOKEN).persistence(persistence).build()
-    
-    # إنشاء محادثة متقدمة
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            States.MAIN_MENU: [
-                MessageHandler(filters.Regex("^تسجيل الدخول كمسؤول$"), handle_admin_login),
-                MessageHandler(filters.Regex("^المساعدة$"), help_command),
-            ],
-            States.WAITING_FOR_CREDENTIALS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_credentials),
-            ],
-            States.ADMIN_PANEL: [
-                # أضف معالجات لوحة المسؤول هنا
-                MessageHandler(filters.Regex("^العودة للرئيسية$"), start),
-            ],
-        },
-        fallbacks=[CommandHandler('cancel', cancel), CommandHandler('help', help_command)],
-        name="expense_bot",
-        persistent=True,
-    )
-    
-    # إضافة المعالجات
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("cancel", cancel))
-    
-    # بدء البوت
-    print("🤖 بدء تشغيل بوت إدارة المصروفات...")
-    application.run_polling()
+    try:
+        # ✅ استخدام Application بدلاً من Updater
+        persistence = PicklePersistence(filepath="conversationbot")
+        application = Application.builder().token(TOKEN).persistence(persistence).build()
+        
+        # إنشاء محادثة متقدمة
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('start', start)],
+            states={
+                States.MAIN_MENU: [
+                    MessageHandler(filters.Regex("^تسجيل الدخول كمسؤول$"), handle_admin_login),
+                    MessageHandler(filters.Regex("^المساعدة$"), help_command),
+                ],
+                States.WAITING_FOR_CREDENTIALS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_credentials),
+                ],
+                States.ADMIN_PANEL: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_panel),
+                ],
+            },
+            fallbacks=[CommandHandler('cancel', cancel), CommandHandler('help', help_command)],
+            name="expense_bot",
+            persistent=True,
+        )
+        
+        # إضافة المعالجات
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("cancel", cancel))
+        
+        # بدء البوت
+        print("🤖 بدء تشغيل بوت إدارة المصروفات...")
+        print("✅ البوت يعمل الآن! اضغط Ctrl+C لإيقافه")
+        
+        # ✅ استخدام run_polling من Application
+        application.run_polling()
+        
+    except Exception as e:
+        logger.error(f"❌ خطأ في تشغيل البوت: {e}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()
