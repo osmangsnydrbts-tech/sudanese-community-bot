@@ -31,8 +31,8 @@ if not TOKEN:
     print("❌ خطأ: لم يتم تعيين BOT_TOKEN في متغيرات البيئة")
     sys.exit(1)
 
-ADMIN_USER = os.getenv("ADMIN_USER", "Osman")
-ADMIN_PASS = os.getenv("ADMIN_PASS", "2580")
+ADMIN_USER = os.getenv("ADMIN_USER", "O")
+ADMIN_PASS = os.getenv("ADMIN_PASS", "24")
 
 print("✅ تم تحميل التوكن بنجاح")
 
