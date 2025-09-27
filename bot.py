@@ -64,7 +64,7 @@ def init_database():
 init_database()
 
 # ⚙️ إعدادات البوت (احتفظ بإعداداتك الحالية)
-TOKEN = os.getenv('TOKEN')  # تأكد أن التوكن في environment variables
+TOKEN = os.getenv('BOT_TOKEN')  # تأكد أن التوكن في environment variables
 ADMIN_USER = os.getenv('ADMIN_USER')
 ADMIN_PASS = os.getenv('ADMIN_PASS')
 
