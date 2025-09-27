@@ -8,6 +8,7 @@ from datetime import datetime, date
 from enum import Enum, auto
 from typing import List, Dict, Optional, Tuple
 import re
+import tempfile
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -60,6 +61,8 @@ class States(Enum):
     # Members data management
     MANAGE_MEMBERS_DATA = auto()
     CONFIRM_DELETE_MEMBERS = auto()
+    UPLOAD_CSV_FILE = auto()
+    CONFIRM_CSV_UPLOAD = auto()
     
     # Delivery reports
     MANAGE_DELIVERY_REPORTS = auto()
@@ -209,6 +212,41 @@ def add_member(name: str, passport: str, phone: str, address: str, role: str, fa
         logger.exception(f"Error adding member: {e}")
         return False
 
+def add_members_bulk(members_data: List[Dict]) -> Tuple[int, int, List[str]]:
+    """إضافة مجموعة من الأعضاء دفعة واحدة
+    Returns: (success_count, failed_count, error_messages)
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    success_count = 0
+    failed_count = 0
+    error_messages = []
+    
+    for member in members_data:
+        try:
+            cursor.execute("""
+                INSERT INTO members (name, passport, phone, address, role, family_members)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                member['name'], 
+                member['passport'], 
+                member['phone'], 
+                member['address'], 
+                member['role'], 
+                member['family_members']
+            ))
+            success_count += 1
+        except sqlite3.IntegrityError:
+            failed_count += 1
+            error_messages.append(f"الجواز {member['passport']} موجود مسبقاً")
+        except Exception as e:
+            failed_count += 1
+            error_messages.append(f"خطأ في إضافة {member.get('name', 'مجهول')}: {str(e)}")
+    
+    conn.commit()
+    conn.close()
+    return success_count, failed_count, error_messages
+
 def is_passport_registered(passport: str) -> bool:
     """التحقق من تسجيل الجواز"""
     conn = get_db_connection()
@@ -293,6 +331,147 @@ def get_members_by_role() -> Dict[str, int]:
     rows = cursor.fetchall()
     conn.close()
     return {row[0]: row[1] for row in rows}
+
+# =========================
+# CSV Processing functions
+# =========================
+
+def validate_csv_data(csv_data: List[Dict]) -> Tuple[List[Dict], List[str]]:
+    """التحقق من صحة بيانات CSV
+    Returns: (valid_data, error_messages)
+    """
+    valid_data = []
+    error_messages = []
+    required_fields = ['name', 'passport', 'phone', 'address', 'role', 'family_members']
+    
+    for i, row in enumerate(csv_data, start=1):
+        # التحقق من وجود الحقول المطلوبة
+        missing_fields = [field for field in required_fields if not row.get(field, '').strip()]
+        if missing_fields:
+            error_messages.append(f"الصف {i}: حقول مفقودة - {', '.join(missing_fields)}")
+            continue
+        
+        # التحقق من صحة عدد أفراد الأسرة
+        try:
+            family_count = int(str(row['family_members']).strip())
+            if family_count < 1:
+                error_messages.append(f"الصف {i}: عدد أفراد الأسرة يجب أن يكون أكبر من صفر")
+                continue
+        except ValueError:
+            error_messages.append(f"الصف {i}: عدد أفراد الأسرة يجب أن يكون رقماً صحيحاً")
+            continue
+        
+        # تنظيف البيانات وإضافتها
+        cleaned_row = {
+            'name': str(row['name']).strip(),
+            'passport': str(row['passport']).strip(),
+            'phone': str(row['phone']).strip(),
+            'address': str(row['address']).strip(),
+            'role': str(row['role']).strip(),
+            'family_members': family_count
+        }
+        
+        valid_data.append(cleaned_row)
+    
+    return valid_data, error_messages
+
+def process_csv_file(file_path: str) -> Tuple[List[Dict], List[str]]:
+    """معالجة ملف CSV
+    Returns: (valid_data, error_messages)
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as csvfile:
+            # محاولة تحديد الفاصل
+            sample = csvfile.read(1024)
+            csvfile.seek(0)
+            
+            # البحث عن الفاصل المناسب
+            delimiter = ','
+            if sample.count(';') > sample.count(','):
+                delimiter = ';'
+            elif sample.count('\t') > sample.count(','):
+                delimiter = '\t'
+            
+            reader = csv.DictReader(csvfile, delimiter=delimiter)
+            
+            # تحويل أسماء الأعمدة للإنجليزية إذا كانت بالعربية
+            fieldname_mapping = {
+                'الاسم': 'name',
+                'الجواز': 'passport', 
+                'رقم_الجواز': 'passport',
+                'الهاتف': 'phone',
+                'رقم_الهاتف': 'phone',
+                'العنوان': 'address',
+                'الصفة': 'role',
+                'عدد_افراد_الاسرة': 'family_members',
+                'عدد_الأفراد': 'family_members',
+                'أفراد_الاسرة': 'family_members'
+            }
+            
+            csv_data = []
+            for row in reader:
+                # تحويل أسماء الحقول
+                converted_row = {}
+                for key, value in row.items():
+                    if key in fieldname_mapping:
+                        converted_row[fieldname_mapping[key]] = value
+                    else:
+                        converted_row[key] = value
+                csv_data.append(converted_row)
+            
+            return validate_csv_data(csv_data)
+            
+    except UnicodeDecodeError:
+        # محاولة قراءة بترميز مختلف
+        try:
+            with open(file_path, 'r', encoding='cp1256') as csvfile:
+                reader = csv.DictReader(csvfile)
+                csv_data = list(reader)
+                return validate_csv_data(csv_data)
+        except Exception as e:
+            return [], [f"خطأ في قراءة الملف: {str(e)}"]
+    except Exception as e:
+        return [], [f"خطأ في معالجة الملف: {str(e)}"]
+
+def create_csv_template() -> str:
+    """إنشاء ملف نموذج CSV"""
+    template_data = [
+        {
+            'name': 'محمد أحمد علي',
+            'passport': 'A1234567',
+            'phone': '01234567890',
+            'address': 'شارع النيل، أسوان',
+            'role': 'رب أسرة',
+            'family_members': '4'
+        },
+        {
+            'name': 'فاطمة محمد إبراهيم',
+            'passport': 'B7654321',
+            'phone': '01987654321',
+            'address': 'حي السوق، أسوان',
+            'role': 'ربة منزل',
+            'family_members': '3'
+        }
+    ]
+    
+    template_filename = 'template_members.csv'
+    with open(template_filename, 'w', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['name', 'passport', 'phone', 'address', 'role', 'family_members']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        
+        # كتابة العناوين بالعربية
+        arabic_headers = {
+            'name': 'الاسم',
+            'passport': 'الجواز', 
+            'phone': 'الهاتف',
+            'address': 'العنوان',
+            'role': 'الصفة',
+            'family_members': 'عدد_افراد_الاسرة'
+        }
+        writer.writerow(arabic_headers)
+        writer.writerows(template_data)
+    
+    return template_filename
 
 # =========================
 # Users Database Operations
@@ -826,8 +1005,9 @@ def account_management_kb():
 def manage_members_data_kb():
     return ReplyKeyboardMarkup(
         [
-            [KeyboardButton("⬇️ تنزيل البيانات"), KeyboardButton("🗑️ مسح البيانات")],
-            [KeyboardButton("📊 ملخص المسجلين"), KeyboardButton("🔙 رجوع")],
+            [KeyboardButton("⬇️ تنزيل البيانات"), KeyboardButton("📤 رفع ملف CSV")],
+            [KeyboardButton("📊 ملخص المسجلين"), KeyboardButton("📋 نموذج CSV")],
+            [KeyboardButton("🗑️ مسح البيانات"), KeyboardButton("🔙 رجوع")],
         ],
         resize_keyboard=True,
     )
@@ -903,6 +1083,13 @@ def confirm_delete_members_kb():
 def confirm_delete_stats_kb():
     return ReplyKeyboardMarkup(
         [[KeyboardButton("✅ نعم، احذف الملخص")],
+         [KeyboardButton("❌ لا، إلغاء")]],
+        resize_keyboard=True,
+    )
+
+def confirm_csv_upload_kb():
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("✅ نعم، أضف البيانات")],
          [KeyboardButton("❌ لا، إلغاء")]],
         resize_keyboard=True,
     )
@@ -1792,6 +1979,37 @@ async def manage_members_data_menu(update: Update, context: ContextTypes.DEFAULT
         os.remove("members.csv")
         return States.MANAGE_MEMBERS_DATA
     
+    elif text == "📤 رفع ملف CSV":
+        instructions = (
+            "📤 رفع ملف CSV للمسجلين:\n\n"
+            "🔹 يجب أن يحتوي الملف على الأعمدة التالية:\n"
+            "- الاسم (name)\n"
+            "- الجواز (passport)\n"
+            "- الهاتف (phone)\n"
+            "- العنوان (address)\n"
+            "- الصفة (role)\n"
+            "- عدد_افراد_الاسرة (family_members)\n\n"
+            "🔹 يمكن استخدام الأسماء العربية أو الإنجليزية للأعمدة\n"
+            "🔹 للحصول على نموذج، اختر 'نموذج CSV'\n\n"
+            "📄 الآن، أرسل ملف CSV:"
+        )
+        await update.message.reply_text(instructions, reply_markup=cancel_or_back_kb())
+        return States.UPLOAD_CSV_FILE
+    
+    elif text == "📋 نموذج CSV":
+        template_file = create_csv_template()
+        
+        await update.message.reply_document(
+            document=open(template_file, "rb"),
+            filename="نموذج_المسجلين.csv",
+            caption="📋 نموذج ملف CSV للمسجلين\n\n"
+                   "يمكنك تعديل البيانات النموذجية وإضافة المزيد من الصفوف"
+        )
+        
+        # حذف الملف المؤقت
+        os.remove(template_file)
+        return States.MANAGE_MEMBERS_DATA
+    
     elif text == "🗑️ مسح البيانات":
         await update.message.reply_text(
             "⚠️ هل أنت متأكد من أنك تريد حذف جميع بيانات المسجلين؟\n\n"
@@ -1822,6 +2040,114 @@ async def manage_members_data_menu(update: Update, context: ContextTypes.DEFAULT
     elif text == "🔙 رجوع":
         await update.message.reply_text("⬅️ رجعت لقائمة إدارة الحسابات.", reply_markup=account_management_kb())
         return States.ACCOUNT_MANAGEMENT
+    
+    return States.MANAGE_MEMBERS_DATA
+
+async def handle_csv_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة رفع ملف CSV"""
+    if not update.message.document:
+        await update.message.reply_text(
+            "⚠️ يرجى إرسال ملف CSV صالح.",
+            reply_markup=cancel_or_back_kb()
+        )
+        return States.UPLOAD_CSV_FILE
+    
+    # التحقق من نوع الملف
+    file_name = update.message.document.file_name
+    if not file_name.lower().endswith('.csv'):
+        await update.message.reply_text(
+            "⚠️ يرجى إرسال ملف CSV فقط.",
+            reply_markup=cancel_or_back_kb()
+        )
+        return States.UPLOAD_CSV_FILE
+    
+    try:
+        # تحميل الملف
+        file = await update.message.document.get_file()
+        
+        # إنشاء ملف مؤقت
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False) as temp_file:
+            await file.download_to_drive(temp_file.name)
+            temp_file_path = temp_file.name
+        
+        # معالجة الملف
+        valid_data, errors = process_csv_file(temp_file_path)
+        
+        # حذف الملف المؤقت
+        os.unlink(temp_file_path)
+        
+        if not valid_data and errors:
+            error_message = "❌ فشل في معالجة الملف:\n\n"
+            error_message += "\n".join(errors[:10])  # أول 10 أخطاء فقط
+            if len(errors) > 10:
+                error_message += f"\n... و {len(errors) - 10} خطأ آخر"
+            await update.message.reply_text(error_message, reply_markup=cancel_or_back_kb())
+            return States.UPLOAD_CSV_FILE
+        
+        # حفظ البيانات الصالحة في السياق
+        context.user_data['csv_data'] = valid_data
+        context.user_data['csv_errors'] = errors
+        
+        # عرض ملخص
+        summary = f"📊 ملخص الملف:\n\n"
+        summary += f"✅ صفوف صالحة: {len(valid_data)}\n"
+        if errors:
+            summary += f"⚠️ أخطاء: {len(errors)}\n\n"
+            summary += "الأخطاء:\n" + "\n".join(errors[:5])
+            if len(errors) > 5:
+                summary += f"\n... و {len(errors) - 5} خطأ آخر"
+        
+        summary += f"\n\nهل تريد إضافة {len(valid_data)} عضو إلى النظام؟"
+        
+        await update.message.reply_text(summary, reply_markup=confirm_csv_upload_kb())
+        return States.CONFIRM_CSV_UPLOAD
+        
+    except Exception as e:
+        logger.exception(f"Error processing CSV file: {e}")
+        await update.message.reply_text(
+            f"❌ حدث خطأ في معالجة الملف: {str(e)}",
+            reply_markup=cancel_or_back_kb()
+        )
+        return States.UPLOAD_CSV_FILE
+
+async def confirm_csv_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد إضافة بيانات CSV"""
+    text = update.message.text
+    
+    if text == "✅ نعم، أضف البيانات":
+        csv_data = context.user_data.get('csv_data', [])
+        if not csv_data:
+            await update.message.reply_text(
+                "⚠️ لا توجد بيانات للإضافة.",
+                reply_markup=manage_members_data_kb()
+            )
+            return States.MANAGE_MEMBERS_DATA
+        
+        # إضافة البيانات
+        success_count, failed_count, error_messages = add_members_bulk(csv_data)
+        
+        # رسالة النتيجة
+        result_message = f"✅ تم الانتهاء من رفع الملف:\n\n"
+        result_message += f"✅ تم إضافة: {success_count} عضو\n"
+        if failed_count > 0:
+            result_message += f"❌ فشل في إضافة: {failed_count} عضو\n\n"
+            if error_messages:
+                result_message += "أسباب الفشل:\n"
+                result_message += "\n".join(error_messages[:10])
+                if len(error_messages) > 10:
+                    result_message += f"\n... و {len(error_messages) - 10} خطأ آخر"
+        
+        await update.message.reply_text(result_message, reply_markup=manage_members_data_kb())
+        
+    else:
+        await update.message.reply_text(
+            "❌ تم إلغاء إضافة البيانات.",
+            reply_markup=manage_members_data_kb()
+        )
+    
+    # تنظيف البيانات
+    context.user_data.pop('csv_data', None)
+    context.user_data.pop('csv_errors', None)
     
     return States.MANAGE_MEMBERS_DATA
 
@@ -2266,6 +2592,11 @@ def main():
             States.CHANGE_ASSISTANT_USER: [MessageHandler(filters.TEXT & ~filters.Text(["🔙 رجوع"]), get_new_password_for_assistant)],
             States.CHANGE_ASSISTANT_PASS: [MessageHandler(filters.TEXT & ~filters.Text(["❌ إلغاء", "🔙 رجوع"]), update_assistant_password_handler)],
             States.MANAGE_MEMBERS_DATA: [MessageHandler(filters.TEXT, manage_members_data_menu)],
+            States.UPLOAD_CSV_FILE: [
+                MessageHandler(filters.Document.FileExtension("csv"), handle_csv_upload),
+                MessageHandler(filters.TEXT & ~filters.Text(["❌ إلغاء", "🔙 رجوع"]), handle_csv_upload)
+            ],
+            States.CONFIRM_CSV_UPLOAD: [MessageHandler(filters.TEXT, confirm_csv_upload)],
             States.CONFIRM_DELETE_MEMBERS: [MessageHandler(filters.TEXT, admin_clear_members)],
             States.MANAGE_DELIVERY_REPORTS: [MessageHandler(filters.TEXT, manage_delivery_reports_menu)],
             States.CONFIRM_DELETE_DELIVERIES: [MessageHandler(filters.TEXT, delete_delivery_reports)],
