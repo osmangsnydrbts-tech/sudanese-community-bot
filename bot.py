@@ -24,7 +24,7 @@ from telegram.ext import (
 # Configuration
 # =========================
 
-TOKEN = os.getenv('TOKEN')
+TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_USER = "Osman"
 ADMIN_PASS = "2580"
 
