@@ -20,6 +20,71 @@ from telegram.ext import (
     PicklePersistence,
 )
 
+# 🔧 إعدادات المسار للقرص الدائم على Render
+DISK_PATH = "/home/render/data"
+os.makedirs(DISK_PATH, exist_ok=True)  # تأكد من وجود المجلد
+
+# 📁 مسارات الملفات على القرص الدائم
+DB_PATH = os.path.join(DISK_PATH, "bot_database.db")
+PERSISTENCE_PATH = os.path.join(DISK_PATH, "conversation_data.pickle")
+
+# 🔄 إذا كنت تستخدم PicklePersistence، عدل السطر ليصبح:
+persistence = PicklePersistence(filepath=PERSISTENCE_PATH)
+
+# 🔌 إذا كان لديك اتصال بقاعدة البيانات، استخدم المسار الجديد
+def init_database():
+    """تهيئة قاعدة البيانات على المسار الدائم"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # أنشئ الجداول التي تحتاجها هنا
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            username TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # أضف الجداول الأخرى التي تحتاجها
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            description TEXT,
+            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+# 🚀 استدعاء تهيئة قاعدة البيانات عند البدء
+init_database()
+
+# ⚙️ إعدادات البوت (احتفظ بإعداداتك الحالية)
+TOKEN = os.getenv('TOKEN')  # تأكد أن التوكن في environment variables
+ADMIN_USER = os.getenv('ADMIN_USER')
+ADMIN_PASS = os.getenv('ADMIN_PASS')
+
+# 📝 تأكد من أن التوكن موجود
+if not TOKEN:
+    logging.error("لم يتم العثور على التوكن! تأكد من إعداد environment variables.")
+    exit(1)
+
+# 🔄 إذا كنت تستخدم ApplicationBuilder، عدله ليستخدم المسار الدائم
+def main():
+    # استخدم persistence الجديدة إذا كنت تحتاجها
+    application = Application.builder().token(TOKEN).persistence(persistence).build()
+    
+    # أو بدون persistence إذا لم تكن تستخدمها
+    # application = Application.builder().token(TOKEN).build()
+    
+    # أضف handlers الخاص بك هنا (احتفظ بالأكواد الحالية)
+    # ... handlers الحالية ...
+    
+
 # =========================
 # Configuration
 # =========================
