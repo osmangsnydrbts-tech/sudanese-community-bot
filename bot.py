@@ -4,10 +4,9 @@ import os
 import csv
 import sqlite3
 import logging
-import sys
 from datetime import datetime, date
 from enum import Enum, auto
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import re
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -17,7 +16,7 @@ from telegram.ext import (
     MessageHandler,
     ConversationHandler,
     filters,
-    ContextTypes,  # ✅ التغيير هنا من CallbackContext إلى ContextTypes
+    ContextTypes,
     PicklePersistence,
 )
 
@@ -25,32 +24,12 @@ from telegram.ext import (
 # Configuration
 # =========================
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = "8342715370:AAGgUMEKd1E0u3hi_u28jMNrZA9RD0v0WXo"
+ADMIN_USER = "Osman"
+ADMIN_PASS = "2580"
 
-if not TOKEN:
-    print("❌ خطأ: لم يتم تعيين BOT_TOKEN في متغيرات البيئة")
-    sys.exit(1)
-
-ADMIN_USER = os.getenv("ADMIN_USER")
-ADMIN_PASS = os.getenv("ADMIN_PASS")
-
-print("✅ تم تحميل التوكن بنجاح")
-
-# باقي الكود يبقى كما هو...
-
-# ملفات CSV
-MEMBERS_FILE = "members.csv"
-USERS_FILE = "users.csv"
-DELIVERIES_FILE = "deliveries.csv"
-ASSISTANTS_FILE = "assistants.csv"
-STATISTICS_FILE = "statistics_report.csv"
-SERVICE_REQUESTS_CSV = "services_requests.csv"
-
-# قاعدة البيانات للخدمات
-SERVICES_DB = "services.db"
-
-# مجلد ملفات CSV للخدمات
-SERVICES_CSV_DIR = "services_csv"
+# قاعدة البيانات الرئيسية
+DATABASE = "community_bot.db"
 
 # =========================
 # States using Enum
@@ -127,101 +106,457 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =========================
-# CSV Helper functions
+# Database Helper functions
 # =========================
 
-def ensure_csv(filename: str, header: List[str]) -> None:
-    """Create file with header if not exists or empty."""
-    if not os.path.exists(filename) or os.stat(filename).st_size == 0:
-        with open(filename, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(header)
+def get_db_connection():
+    """إنشاء اتصال مع قاعدة البيانات"""
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row  # للحصول على النتائج كـ dictionary
+    return conn
 
-def read_csv_file(filename: str) -> List[Dict[str, str]]:
-    if not os.path.exists(filename):
-        return []
-    with open(filename, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        return list(reader)
-
-def write_csv_file(filename: str, data: List[Dict[str, str]], fieldnames: List[str]) -> None:
-    with open(filename, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(data)
-
-def append_csv_row(filename: str, row: Dict[str, str], fieldnames: List[str]) -> None:
-    file_exists = os.path.isfile(filename) and os.stat(filename).st_size > 0
-    with open(filename, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row)
-
-def count_csv_rows(filename: str) -> int:
-    if not os.path.exists(filename):
-        return 0
-    with open(filename, newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        return max(0, sum(1 for _ in reader) - 1)
-
-# إنشاء مجلد CSV للخدمات
-os.makedirs(SERVICES_CSV_DIR, exist_ok=True)
-
-# تأكد من وجود ملفات CSV
-ensure_csv(MEMBERS_FILE, ["الاسم", "الجواز", "الهاتف", "العنوان", "الصفة", "عدد_افراد_الاسرة"])
-ensure_csv(ASSISTANTS_FILE, ["username", "password"])
-ensure_csv(DELIVERIES_FILE, ["المشرف", "رقم_الجواز", "اسم_العضو", "تاريخ_التسليم"])
-ensure_csv(USERS_FILE, ["user_id", "username"])
-ensure_csv(SERVICE_REQUESTS_CSV, ["رقم_الجواز", "الخدمة", "تاريخ_الطلب", "مقدم_الطلب"])
-
-# =========================
-# Database (SQLite) for services & requests
-# =========================
-
-def init_services_db():
-    conn = sqlite3.connect(SERVICES_DB)
+def init_database():
+    """تهيئة قاعدة البيانات وإنشاء الجداول"""
+    conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # جدول الأعضاء المسجلين
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            passport TEXT UNIQUE NOT NULL,
+            phone TEXT NOT NULL,
+            address TEXT NOT NULL,
+            role TEXT NOT NULL,
+            family_members INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # جدول المستخدمين
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            username TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # جدول المشرفين
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS assistants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # جدول التسليمات
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            assistant TEXT NOT NULL,
+            passport TEXT NOT NULL,
+            member_name TEXT NOT NULL,
+            delivery_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # جدول الخدمات
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS services (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE
+            name TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    
+    # جدول طلبات الخدمات
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS service_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            passport TEXT,
-            service_name TEXT,
-            request_date TEXT,
-            requester TEXT
+            passport TEXT NOT NULL,
+            service_name TEXT NOT NULL,
+            request_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            requester TEXT NOT NULL
         )
     """)
+    
     conn.commit()
     conn.close()
 
-def add_service_to_db(service_name: str) -> bool:
+# =========================
+# Members Database Operations
+# =========================
+
+def add_member(name: str, passport: str, phone: str, address: str, role: str, family_members: int) -> bool:
+    """إضافة عضو جديد"""
     try:
-        conn = sqlite3.connect(SERVICES_DB)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO members (name, passport, phone, address, role, family_members)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (name, passport, phone, address, role, family_members))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    except Exception as e:
+        logger.exception(f"Error adding member: {e}")
+        return False
+
+def is_passport_registered(passport: str) -> bool:
+    """التحقق من تسجيل الجواز"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM members WHERE passport = ?", (passport,))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count > 0
+
+def get_member_by_passport(passport: str) -> Optional[Dict[str, str]]:
+    """الحصول على بيانات العضو بواسطة رقم الجواز"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM members WHERE passport = ?", (passport,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {
+            "الاسم": row["name"],
+            "الجواز": row["passport"],
+            "الهاتف": row["phone"],
+            "العنوان": row["address"],
+            "الصفة": row["role"],
+            "عدد_افراد_الاسرة": str(row["family_members"])
+        }
+    return None
+
+def get_all_members() -> List[Dict[str, str]]:
+    """الحصول على جميع الأعضاء"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM members ORDER BY id")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [{
+        "الاسم": row["name"],
+        "الجواز": row["passport"],
+        "الهاتف": row["phone"],
+        "العنوان": row["address"],
+        "الصفة": row["role"],
+        "عدد_افراد_الاسرة": str(row["family_members"])
+    } for row in rows]
+
+def delete_all_members() -> bool:
+    """حذف جميع الأعضاء"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM members")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.exception(f"Error deleting members: {e}")
+        return False
+
+def get_members_count() -> int:
+    """عدد الأعضاء المسجلين"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM members")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_total_family_members() -> int:
+    """إجمالي أفراد الأسر"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT SUM(family_members) FROM members")
+    total = cursor.fetchone()[0]
+    conn.close()
+    return total or 0
+
+def get_members_by_role() -> Dict[str, int]:
+    """توزيع الأعضاء حسب الصفة"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT role, COUNT(*) FROM members GROUP BY role")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
+# =========================
+# Users Database Operations
+# =========================
+
+def add_user_if_not_exists(user_id: int, username: str):
+    """إضافة مستخدم جديد إذا لم يكن موجوداً"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (user_id, username)
+            VALUES (?, ?)
+        """, (str(user_id), username or ""))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.exception(f"Error adding user: {e}")
+
+def get_all_users() -> List[Dict[str, str]]:
+    """الحصول على جميع المستخدمين"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users ORDER BY user_id")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"user_id": row["user_id"], "username": row["username"]} for row in rows]
+
+def get_users_count() -> int:
+    """عدد المستخدمين"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+# =========================
+# Assistants Database Operations
+# =========================
+
+def add_assistant(username: str, password: str) -> bool:
+    """إضافة مشرف جديد"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO assistants (username, password)
+            VALUES (?, ?)
+        """, (username, password))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    except Exception as e:
+        logger.exception(f"Error adding assistant: {e}")
+        return False
+
+def delete_assistant(username: str) -> bool:
+    """حذف مشرف"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM assistants WHERE username = ?", (username,))
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return deleted > 0
+    except Exception as e:
+        logger.exception(f"Error deleting assistant: {e}")
+        return False
+
+def update_assistant_password(username: str, new_password: str) -> bool:
+    """تحديث كلمة مرور مشرف"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE assistants SET password = ? WHERE username = ?
+        """, (new_password, username))
+        updated = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return updated > 0
+    except Exception as e:
+        logger.exception(f"Error updating assistant password: {e}")
+        return False
+
+def get_all_assistants() -> List[Dict[str, str]]:
+    """الحصول على جميع المشرفين"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, password FROM assistants ORDER BY id")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"username": row["username"], "password": row["password"]} for row in rows]
+
+def validate_assistant(username: str, password: str) -> bool:
+    """التحقق من صحة بيانات المشرف"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(*) FROM assistants WHERE username = ? AND password = ?
+    """, (username, password))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count > 0
+
+def get_assistants_count() -> int:
+    """عدد المشرفين"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM assistants")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+# =========================
+# Deliveries Database Operations
+# =========================
+
+def add_delivery(assistant: str, passport: str, member_name: str) -> bool:
+    """إضافة تسليم جديد"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO deliveries (assistant, passport, member_name)
+            VALUES (?, ?, ?)
+        """, (assistant, passport, member_name))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.exception(f"Error adding delivery: {e}")
+        return False
+
+def check_existing_delivery(passport: str) -> Optional[Dict[str, str]]:
+    """التحقق من وجود تسليم سابق"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT assistant, passport, member_name, delivery_date
+        FROM deliveries WHERE passport = ?
+        ORDER BY delivery_date DESC LIMIT 1
+    """, (passport,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {
+            "المشرف": row["assistant"],
+            "رقم_الجواز": row["passport"],
+            "اسم_العضو": row["member_name"],
+            "تاريخ_التسليم": row["delivery_date"]
+        }
+    return None
+
+def get_all_deliveries() -> List[Dict[str, str]]:
+    """الحصول على جميع التسليمات"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT assistant, passport, member_name, delivery_date
+        FROM deliveries ORDER BY delivery_date DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [{
+        "المشرف": row["assistant"],
+        "رقم_الجواز": row["passport"],
+        "اسم_العضو": row["member_name"],
+        "تاريخ_التسليم": row["delivery_date"]
+    } for row in rows]
+
+def get_deliveries_by_assistant(assistant: str) -> List[Dict[str, str]]:
+    """الحصول على تسليمات مشرف معين"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT assistant, passport, member_name, delivery_date
+        FROM deliveries WHERE assistant = ?
+        ORDER BY delivery_date DESC
+    """, (assistant,))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [{
+        "المشرف": row["assistant"],
+        "رقم_الجواز": row["passport"],
+        "اسم_العضو": row["member_name"],
+        "تاريخ_التسليم": row["delivery_date"]
+    } for row in rows]
+
+def delete_all_deliveries() -> bool:
+    """حذف جميع التسليمات"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM deliveries")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.exception(f"Error deleting deliveries: {e}")
+        return False
+
+def get_deliveries_count() -> int:
+    """عدد التسليمات"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM deliveries")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_deliveries_by_assistant_count() -> Dict[str, int]:
+    """توزيع التسليمات حسب المشرف"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT assistant, COUNT(*) FROM deliveries GROUP BY assistant")
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
+def get_deliveries_by_date() -> Dict[str, int]:
+    """توزيع التسليمات حسب التاريخ"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DATE(delivery_date) as date, COUNT(*) 
+        FROM deliveries 
+        GROUP BY DATE(delivery_date)
+        ORDER BY date DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
+# =========================
+# Services Database Operations
+# =========================
+
+def add_service(service_name: str) -> bool:
+    """إضافة خدمة جديدة"""
+    try:
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("INSERT INTO services (name) VALUES (?)", (service_name,))
         conn.commit()
         conn.close()
-        
-        # إنشاء ملف CSV منفصل للخدمة
-        service_csv_file = os.path.join(SERVICES_CSV_DIR, f"{service_name}.csv")
-        ensure_csv(service_csv_file, ["رقم_الجواز", "الخدمة", "تاريخ_الطلب", "مقدم_الطلب"])
-        
         return True
     except sqlite3.IntegrityError:
         return False
-    except Exception:
-        logger.exception("Error adding service to DB")
+    except Exception as e:
+        logger.exception(f"Error adding service: {e}")
         return False
 
-def delete_service_from_db(service_name: str) -> bool:
+def delete_service(service_name: str) -> bool:
+    """حذف خدمة"""
     try:
-        conn = sqlite3.connect(SERVICES_DB)
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         # حذف الخدمة من جدول الخدمات
@@ -233,59 +568,63 @@ def delete_service_from_db(service_name: str) -> bool:
         
         conn.commit()
         conn.close()
-        
-        # حذف ملف CSV الخاص بالخدمة
-        service_csv_file = os.path.join(SERVICES_CSV_DIR, f"{service_name}.csv")
-        if os.path.exists(service_csv_file):
-            os.remove(service_csv_file)
-        
         return deleted > 0
-    except Exception:
-        logger.exception("Error deleting service from DB")
+    except Exception as e:
+        logger.exception(f"Error deleting service: {e}")
         return False
 
-def get_services_from_db() -> List[Dict[str, str]]:
-    conn = sqlite3.connect(SERVICES_DB)
+def get_all_services() -> List[Dict[str, str]]:
+    """الحصول على جميع الخدمات"""
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM services ORDER BY id")
     rows = cursor.fetchall()
     conn.close()
-    return [{"service_id": str(r[0]), "service_name": r[1]} for r in rows]
+    return [{"service_id": str(row["id"]), "service_name": row["name"]} for row in rows]
 
-def add_service_request(passport: str, service_name: str, requester: str):
+def add_service_request(passport: str, service_name: str, requester: str) -> bool:
+    """إضافة طلب خدمة"""
     try:
-        conn = sqlite3.connect(SERVICES_DB)
+        conn = get_db_connection()
         cursor = conn.cursor()
-        request_date = datetime.now().strftime("%Y-%m-%d %H:%M")
         cursor.execute("""
-            INSERT INTO service_requests (passport, service_name, request_date, requester)
-            VALUES (?, ?, ?, ?)
-        """, (passport, service_name, request_date, requester))
+            INSERT INTO service_requests (passport, service_name, requester)
+            VALUES (?, ?, ?)
+        """, (passport, service_name, requester))
         conn.commit()
         conn.close()
-        
-        # إضافة الطلب إلى ملف CSV الخاص بالخدمة
-        service_csv_file = os.path.join(SERVICES_CSV_DIR, f"{service_name}.csv")
-        append_csv_row(service_csv_file, {
-            "رقم_الجواز": passport,
-            "الخدمة": service_name,
-            "تاريخ_الطلب": request_date,
-            "مقدم_الطلب": requester
-        }, ["رقم_الجواز", "الخدمة", "تاريخ_الطلب", "مقدم_الطلب"])
-        
-    except Exception:
-        logger.exception("Error inserting service request")
+        return True
+    except Exception as e:
+        logger.exception(f"Error adding service request: {e}")
+        return False
 
-def get_service_requests_from_db():
-    conn = sqlite3.connect(SERVICES_DB)
+def check_existing_service_request(passport: str, service_name: str) -> bool:
+    """التحقق من وجود طلب خدمة سابق"""
+    conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, passport, service_name, request_date, requester FROM service_requests ORDER BY id")
+    cursor.execute("""
+        SELECT COUNT(*) FROM service_requests 
+        WHERE passport = ? AND service_name = ?
+    """, (passport, service_name))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count > 0
+
+def get_service_requests() -> List[Tuple]:
+    """الحصول على جميع طلبات الخدمات"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, passport, service_name, request_date, requester 
+        FROM service_requests ORDER BY id
+    """)
     rows = cursor.fetchall()
     conn.close()
-    return rows
+    return [(row["id"], row["passport"], row["service_name"], row["request_date"], row["requester"]) for row in rows]
 
-def get_service_requests_by_service(service_name: str = None):
-    conn = sqlite3.connect(SERVICES_DB)
+def get_service_requests_by_service(service_name: str = None) -> List[Tuple]:
+    """الحصول على طلبات خدمة معينة أو جميعها"""
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     if service_name:
@@ -304,110 +643,133 @@ def get_service_requests_by_service(service_name: str = None):
     
     rows = cursor.fetchall()
     conn.close()
-    return rows
-
-def delete_service_request(request_id: int) -> bool:
-    try:
-        conn = sqlite3.connect(SERVICES_DB)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM service_requests WHERE id = ?", (request_id,))
-        deleted = cursor.rowcount
-        conn.commit()
-        conn.close()
-        return deleted > 0
-    except Exception:
-        logger.exception("Error deleting service request from DB")
-        return False
-
-def delete_all_service_requests() -> bool:
-    try:
-        conn = sqlite3.connect(SERVICES_DB)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM service_requests")
-        conn.commit()
-        conn.close()
-        
-        # حذف جميع ملفات CSV للخدمات وإعادة إنشائها فارغة
-        services = get_services_from_db()
-        for service in services:
-            service_csv_file = os.path.join(SERVICES_CSV_DIR, f"{service['service_name']}.csv")
-            if os.path.exists(service_csv_file):
-                os.remove(service_csv_file)
-            ensure_csv(service_csv_file, ["رقم_الجواز", "الخدمة", "تاريخ_الطلب", "مقدم_الطلب"])
-        
-        return True
-    except Exception:
-        logger.exception("Error deleting all service requests from DB")
-        return False
+    return [(row["id"], row["passport"], row["service_name"], row["request_date"], row["requester"]) for row in rows]
 
 def delete_service_requests_by_service(service_name: str) -> bool:
+    """حذف طلبات خدمة معينة"""
     try:
-        conn = sqlite3.connect(SERVICES_DB)
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM service_requests WHERE service_name = ?", (service_name,))
         deleted = cursor.rowcount
         conn.commit()
         conn.close()
-        
-        # إعادة إنشاء ملف CSV الخاص بالخدمة فارغ
-        service_csv_file = os.path.join(SERVICES_CSV_DIR, f"{service_name}.csv")
-        if os.path.exists(service_csv_file):
-            os.remove(service_csv_file)
-        ensure_csv(service_csv_file, ["رقم_الجواز", "الخدمة", "تاريخ_الطلب", "مقدم_الطلب"])
-        
         return deleted > 0
-    except Exception:
-        logger.exception("Error deleting service requests by service")
+    except Exception as e:
+        logger.exception(f"Error deleting service requests: {e}")
         return False
 
-def check_existing_service_request(passport: str, service_name: str) -> bool:
-    """Check if a service request already exists for this passport and service"""
-    conn = sqlite3.connect(SERVICES_DB)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT COUNT(*) FROM service_requests 
-        WHERE passport = ? AND service_name = ?
-    """, (passport, service_name))
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count > 0
-
-def is_passport_registered(passport: str) -> bool:
-    """Check if passport is already registered in members.csv"""
-    members = read_csv_file(MEMBERS_FILE)
-    return any(m.get("الجواز") == passport for m in members)
-
-def get_member_by_passport(passport: str) -> Optional[Dict[str, str]]:
-    """Get member details by passport number"""
-    members = read_csv_file(MEMBERS_FILE)
-    for member in members:
-        if member.get("الجواز") == passport:
-            return member
-    return None
-
-def check_existing_delivery(passport: str) -> Optional[Dict[str, str]]:
-    """Check if a delivery already exists for this passport"""
-    deliveries = read_csv_file(DELIVERIES_FILE)
-    for delivery in deliveries:
-        if delivery.get("رقم_الجواز") == passport:
-            return delivery
-    return None
+def delete_all_service_requests() -> bool:
+    """حذف جميع طلبات الخدمات"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM service_requests")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.exception(f"Error deleting all service requests: {e}")
+        return False
 
 def get_service_statistics() -> Dict[str, int]:
     """إحصائيات الخدمات"""
-    services = get_services_from_db()
-    stats = {}
-    
-    for service in services:
-        service_name = service["service_name"]
-        conn = sqlite3.connect(SERVICES_DB)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM service_requests WHERE service_name = ?", (service_name,))
-        count = cursor.fetchone()[0]
-        conn.close()
-        stats[service_name] = count
-    
-    return stats
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT service_name, COUNT(*) 
+        FROM service_requests 
+        GROUP BY service_name
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
+def get_service_requests_count() -> int:
+    """عدد طلبات الخدمات"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM service_requests")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+# =========================
+# CSV Export functions
+# =========================
+
+def export_members_to_csv(filename: str = "members.csv"):
+    """تصدير الأعضاء إلى CSV"""
+    members = get_all_members()
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        if members:
+            fieldnames = list(members[0].keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(members)
+        else:
+            writer = csv.writer(f)
+            writer.writerow(["الاسم", "الجواز", "الهاتف", "العنوان", "الصفة", "عدد_افراد_الاسرة"])
+
+def export_assistants_to_csv(filename: str = "assistants.csv"):
+    """تصدير المشرفين إلى CSV"""
+    assistants = get_all_assistants()
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        if assistants:
+            fieldnames = list(assistants[0].keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(assistants)
+        else:
+            writer = csv.writer(f)
+            writer.writerow(["username", "password"])
+
+def export_deliveries_to_csv(filename: str = "deliveries.csv"):
+    """تصدير التسليمات إلى CSV"""
+    deliveries = get_all_deliveries()
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        if deliveries:
+            fieldnames = list(deliveries[0].keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(deliveries)
+        else:
+            writer = csv.writer(f)
+            writer.writerow(["المشرف", "رقم_الجواز", "اسم_العضو", "تاريخ_التسليم"])
+
+def export_assistant_deliveries_to_csv(assistant: str, filename: str):
+    """تصدير تسليمات مشرف معين إلى CSV"""
+    deliveries = get_deliveries_by_assistant(assistant)
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        if deliveries:
+            fieldnames = list(deliveries[0].keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(deliveries)
+        else:
+            writer = csv.writer(f)
+            writer.writerow(["المشرف", "رقم_الجواز", "اسم_العضو", "تاريخ_التسليم"])
+
+def export_service_requests_to_csv(filename: str = "service_requests.csv", service_name: str = None):
+    """تصدير طلبات الخدمات إلى CSV"""
+    requests = get_service_requests_by_service(service_name)
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ID", "رقم_الجواز", "الخدمة", "تاريخ_الطلب", "مقدم_الطلب"])
+        for req in requests:
+            writer.writerow(req)
+
+def export_statistics_to_csv(filename: str = "statistics.csv"):
+    """تصدير الإحصائيات إلى CSV"""
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["نوع الإحصائية", "العدد"])
+        writer.writerow(["إجمالي المسجلين", get_members_count()])
+        writer.writerow(["إجمالي أفراد الأسر", get_total_family_members()])
+        writer.writerow(["إجمالي التسليمات", get_deliveries_count()])
+        writer.writerow(["إجمالي المستخدمين", get_users_count()])
+        writer.writerow(["إجمالي المشرفين", get_assistants_count()])
+        writer.writerow(["إجمالي طلبات الخدمات", get_service_requests_count()])
 
 # =========================
 # Keyboards
@@ -484,8 +846,7 @@ def assistants_management_kb():
         [
             [KeyboardButton("➕ إضافة مشرف"), KeyboardButton("🗑️ حذف مشرف")],
             [KeyboardButton("🔑 تغيير كلمة المرور"), KeyboardButton("📋 كشف المشرفين")],
-            [KeyboardButton("📥 تنزيل قائمة المشرفين"), KeyboardButton("🗑️ حذف كشوفات مشرف")],
-            [KeyboardButton("🔙 رجوع")],
+            [KeyboardButton("📥 تنزيل قائمة المشرفين"), KeyboardButton("🔙 رجوع")],
         ],
         resize_keyboard=True,
     )
@@ -605,25 +966,15 @@ def services_selection_kb(services):
 # Utility functions
 # =========================
 
-def add_user_if_not_exists(user_id: int, username: str):
-    users = read_csv_file(USERS_FILE)
-    if not any(u.get("user_id") == str(user_id) for u in users):
-        append_csv_row(USERS_FILE, {"user_id": str(user_id), "username": username or ""}, ["user_id", "username"])
-
-def validate_admin_session(context) -> bool:  # ✅ إزالة النوع لتفادي المشاكل
-    user_data = context.user_data
-    if not user_data:
-        return False
-        
-    user_type = user_data.get("user_type")
-    login_user = user_data.get("login_user")
+def validate_admin_session(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_type = context.user_data.get("user_type")
+    login_user = context.user_data.get("login_user")
     if not user_type or not login_user:
         return False
     if user_type == "main_admin":
         return login_user == ADMIN_USER
     if user_type == "assistant":
-        assistants = read_csv_file(ASSISTANTS_FILE)
-        return any(row.get("username") == login_user for row in assistants)
+        return validate_assistant(login_user, context.user_data.get("login_pass", ""))
     return False
 
 def format_phone_number(phone: str) -> str:
@@ -636,7 +987,7 @@ def format_phone_number(phone: str) -> str:
     return cleaned
 
 # =========================
-# Handlers - تم تحديث جميع الـ CallbackContext إلى ContextTypes.DEFAULT_TYPE
+# Handlers
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -644,7 +995,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user_if_not_exists(user.id, user.username or "")
     
     welcome_message = (
-        "مرحباً بك في منصة الجالية السودانية بأسوان 🇸🇩\n\n"
+        "مرحباً بك في بوت الجالية السودانية بأسوان 🇸🇩\n\n"
         "يسعدنا انضمامك إلى منصّتنا التي وُجدت لخدمة جميع أبناء الجالية، "
         "وتنظيم بياناتهم وتسهيل الوصول إلى الخدمات."
     )
@@ -799,24 +1150,17 @@ async def confirm_registration(update: Update, context: ContextTypes.DEFAULT_TYP
     address = context.user_data.get("address")
     role = context.user_data.get("role")
     
-    append_csv_row(
-        MEMBERS_FILE,
-        {
-            "الاسم": name,
-            "الجواز": passport,
-            "الهاتف": phone,
-            "العنوان": address,
-            "الصفة": role,
-            "عدد_افراد_الاسرة": str(family_count)
-        },
-        ["الاسم", "الجواز", "الهاتف", "العنوان", "الصفة", "عدد_افراد_الاسرة"]
-    )
-    
-    await update.message.reply_text(
-        "✅ تم تسجيل بياناتك بنجاح!\n"
-        "شكراً لانضمامك إلى منصة الجالية السودانية بأسوان.",
-        reply_markup=main_menu_kb()
-    )
+    if add_member(name, passport, phone, address, role, family_count):
+        await update.message.reply_text(
+            "✅ تم تسجيل بياناتك بنجاح!\n"
+            "شكراً لانضمامك إلى منصة الجالية السودانية بأسوان.",
+            reply_markup=main_menu_kb()
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ حدث خطأ في التسجيل. يرجى المحاولة مرة أخرى.",
+            reply_markup=main_menu_kb()
+        )
     
     context.user_data.clear()
     return ConversationHandler.END
@@ -854,17 +1198,17 @@ async def admin_get_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if username == ADMIN_USER and password == ADMIN_PASS:
         context.user_data["login_user"] = username
+        context.user_data["login_pass"] = password
         context.user_data["user_type"] = "main_admin"
         await update.message.reply_text("✅ تم الدخول كمسؤول رئيسي.", reply_markup=admin_menu_kb())
         return States.ADMIN_MENU
     
-    assistants = read_csv_file(ASSISTANTS_FILE)
-    for assistant in assistants:
-        if assistant.get("username") == username and assistant.get("password") == password:
-            context.user_data["login_user"] = username
-            context.user_data["user_type"] = "assistant"
-            await update.message.reply_text("✅ تم الدخول كمشرف.", reply_markup=assistant_menu_kb())
-            return States.ASSISTANT_MENU
+    if validate_assistant(username, password):
+        context.user_data["login_user"] = username
+        context.user_data["login_pass"] = password
+        context.user_data["user_type"] = "assistant"
+        await update.message.reply_text("✅ تم الدخول كمشرف.", reply_markup=assistant_menu_kb())
+        return States.ASSISTANT_MENU
     
     await update.message.reply_text("❌ بيانات الدخول غير صحيحة.", reply_markup=main_menu_kb())
     return ConversationHandler.END
@@ -922,6 +1266,7 @@ async def admin_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     elif text == "🚪 تسجيل خروج":
         context.user_data.pop("login_user", None)
+        context.user_data.pop("login_pass", None)
         context.user_data.pop("user_type", None)
         await update.message.reply_text("🚪 تم تسجيل الخروج.", reply_markup=main_menu_kb())
         return ConversationHandler.END
@@ -959,7 +1304,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ تم إلغاء الإرسال.", reply_markup=admin_menu_kb())
         return States.ADMIN_MENU
     
-    users = read_csv_file(USERS_FILE)
+    users = get_all_users()
     success = 0
     failed = 0
     
@@ -995,7 +1340,7 @@ async def manage_services_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         return States.ADD_SERVICE
     
     elif text == "📋 عرض الخدمات":
-        services = get_services_from_db()
+        services = get_all_services()
         if not services:
             await update.message.reply_text("⚠️ لا توجد خدمات مضافة.", reply_markup=services_admin_kb())
             return States.MANAGE_SERVICES
@@ -1008,7 +1353,7 @@ async def manage_services_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         return States.MANAGE_SERVICES
     
     elif text == "🗑️ حذف خدمة":
-        services = get_services_from_db()
+        services = get_all_services()
         if not services:
             await update.message.reply_text("⚠️ لا توجد خدمات مضافة.", reply_markup=services_admin_kb())
             return States.MANAGE_SERVICES
@@ -1023,7 +1368,7 @@ async def manage_services_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     
     elif text == "📊 إحصائيات الخدمات":
         services_stats = get_service_statistics()
-        services = get_services_from_db()
+        services = get_all_services()
         
         if not services:
             await update.message.reply_text("⚠️ لا توجد خدمات مضافة.", reply_markup=services_admin_kb())
@@ -1064,10 +1409,9 @@ async def admin_add_service_start(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("⬅️ رجعت لقائمة إدارة الخدمات.", reply_markup=services_admin_kb())
         return States.MANAGE_SERVICES
     
-    if add_service_to_db(service_name):
+    if add_service(service_name):
         await update.message.reply_text(
-            f"✅ تم إضافة خدمة {service_name} بنجاح.\n"
-            f"📄 تم إنشاء ملف CSV منفصل للخدمة.",
+            f"✅ تم إضافة خدمة {service_name} بنجاح.",
             reply_markup=services_admin_kb()
         )
     else:
@@ -1076,7 +1420,7 @@ async def admin_add_service_start(update: Update, context: ContextTypes.DEFAULT_
     return States.MANAGE_SERVICES
 
 async def admin_delete_service_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    services = get_services_from_db()
+    services = get_all_services()
     if not services:
         await update.message.reply_text("⚠️ لا توجد خدمات لحذفها.", reply_markup=services_admin_kb())
         return States.MANAGE_SERVICES
@@ -1086,10 +1430,9 @@ async def admin_delete_service_start(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("⬅️ رجعت لقائمة إدارة الخدمات.", reply_markup=services_admin_kb())
         return States.MANAGE_SERVICES
     
-    if delete_service_from_db(selected):
+    if delete_service(selected):
         await update.message.reply_text(
-            f"✅ تم حذف خدمة {selected} بنجاح.\n"
-            f"🗑️ تم حذف ملف CSV الخاص بالخدمة.",
+            f"✅ تم حذف خدمة {selected} بنجاح.",
             reply_markup=services_admin_kb()
         )
     else:
@@ -1106,7 +1449,7 @@ async def service_report_handler(update: Update, context: ContextTypes.DEFAULT_T
     text = update.message.text
     
     if text == "📄 كشف لخدمة واحدة":
-        services = get_services_from_db()
+        services = get_all_services()
         if not services:
             await update.message.reply_text("⚠️ لا توجد خدمات مضافة.", reply_markup=service_report_kb())
             return States.SERVICE_REPORT
@@ -1115,17 +1458,13 @@ async def service_report_handler(update: Update, context: ContextTypes.DEFAULT_T
         return States.SELECT_SERVICE_FOR_REPORT
     
     elif text == "📄 كشف لكل الخدمات":
-        requests = get_service_requests_from_db()
+        requests = get_service_requests()
         if not requests:
             await update.message.reply_text("⚠️ لا توجد طلبات خدمات حتى الآن.", reply_markup=service_report_kb())
             return States.SERVICE_REPORT
         
         # إنشاء تقرير شامل
-        with open("all_services_report.csv", "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["ID", "رقم_الجواز", "الخدمة", "تاريخ_الطلب", "مقدم_الطلب"])
-            for req in requests:
-                writer.writerow(req)
+        export_service_requests_to_csv("all_services_report.csv")
         
         await update.message.reply_document(
             document=open("all_services_report.csv", "rb"),
@@ -1154,7 +1493,7 @@ async def select_service_for_report_handler(update: Update, context: ContextType
         await update.message.reply_text("📄 اختر نوع الكشف:", reply_markup=service_report_kb())
         return States.SERVICE_REPORT
     
-    services = get_services_from_db()
+    services = get_all_services()
     service_names = [s["service_name"] for s in services]
     
     if selected_service not in service_names:
@@ -1162,24 +1501,23 @@ async def select_service_for_report_handler(update: Update, context: ContextType
         return States.SELECT_SERVICE_FOR_REPORT
     
     # إرسال ملف CSV الخاص بالخدمة
-    service_csv_file = os.path.join(SERVICES_CSV_DIR, f"{selected_service}.csv")
-    
-    if not os.path.exists(service_csv_file):
-        await update.message.reply_text("⚠️ لا يوجد كشف لهذه الخدمة حتى الآن.", reply_markup=service_report_kb())
-        return States.SERVICE_REPORT
-    
-    # التحقق من وجود بيانات في الملف
-    requests_count = count_csv_rows(service_csv_file)
-    if requests_count == 0:
+    requests = get_service_requests_by_service(selected_service)
+    if not requests:
         await update.message.reply_text(f"⚠️ لا توجد طلبات لخدمة {selected_service} حتى الآن.", reply_markup=service_report_kb())
         return States.SERVICE_REPORT
     
+    filename = f"{selected_service}_report.csv"
+    export_service_requests_to_csv(filename, selected_service)
+    
     await update.message.reply_document(
-        document=open(service_csv_file, "rb"),
-        filename=f"{selected_service}_report.csv",
+        document=open(filename, "rb"),
+        filename=filename,
         caption=f"📄 كشف طلبات خدمة {selected_service}\n"
-                f"📊 إجمالي الطلبات: {requests_count}"
+                f"📊 إجمالي الطلبات: {len(requests)}"
     )
+    
+    # حذف الملف المؤقت
+    os.remove(filename)
     
     await update.message.reply_text("📄 اختر نوع الكشف:", reply_markup=service_report_kb())
     return States.SERVICE_REPORT
@@ -1189,7 +1527,7 @@ async def delete_service_report_handler(update: Update, context: ContextTypes.DE
     text = update.message.text
     
     if text == "🗑️ حذف كشف خدمة واحدة":
-        services = get_services_from_db()
+        services = get_all_services()
         if not services:
             await update.message.reply_text("⚠️ لا توجد خدمات مضافة.", reply_markup=service_delete_report_kb())
             return States.DELETE_SERVICE_REPORT
@@ -1218,7 +1556,7 @@ async def select_service_for_delete_handler(update: Update, context: ContextType
         await update.message.reply_text("🗑️ اختر نوع الحذف:", reply_markup=service_delete_report_kb())
         return States.DELETE_SERVICE_REPORT
     
-    services = get_services_from_db()
+    services = get_all_services()
     service_names = [s["service_name"] for s in services]
     
     if selected_service not in service_names:
@@ -1281,7 +1619,7 @@ async def confirm_delete_all_services_handler(update: Update, context: ContextTy
 # =========================
 
 async def services_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    services = get_services_from_db()
+    services = get_all_services()
     if not services:
         await update.message.reply_text("⚠️ لا توجد خدمات مضافة حالياً. يرجى مراجعة الإدارة.", reply_markup=main_menu_kb())
         return ConversationHandler.END
@@ -1295,7 +1633,7 @@ async def services_menu_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await go_main_menu(update, context)
         return ConversationHandler.END
     
-    services = get_services_from_db()
+    services = get_all_services()
     service_names = [s["service_name"] for s in services]
     
     if choice not in service_names:
@@ -1340,13 +1678,18 @@ async def service_enter_passport(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
     
     requester = member.get("الاسم") if member else "غير مسجل"
-    add_service_request(passport, service_name, requester)
     
-    await update.message.reply_text(
-        f"✅ تم تقديم طلب {service_name} بنجاح.\n"
-        "شكراً لاستخدامك منصة الجالية السودانية بأسوان.",
-        reply_markup=main_menu_kb()
-    )
+    if add_service_request(passport, service_name, requester):
+        await update.message.reply_text(
+            f"✅ تم تقديم طلب {service_name} بنجاح.\n"
+            "شكراً لاستخدامك منصة الجالية السودانية بأسوان.",
+            reply_markup=main_menu_kb()
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ حدث خطأ في تقديم الطلب. يرجى المحاولة مرة أخرى.",
+            reply_markup=main_menu_kb()
+        )
     
     context.user_data.clear()
     return ConversationHandler.END
@@ -1363,58 +1706,37 @@ async def admin_stats_choice_handler(update: Update, context: ContextTypes.DEFAU
     text = update.message.text
     
     if text == "📋 عرض الملخص":
-        members = read_csv_file(MEMBERS_FILE)
-        deliveries = read_csv_file(DELIVERIES_FILE)
-        users = read_csv_file(USERS_FILE)
-        assistants = read_csv_file(ASSISTANTS_FILE)
-        service_requests = get_service_requests_from_db()
-        
-        total_family_members = 0
-        for member in members:
-            try:
-                family_count = int(member.get("عدد_افراد_الاسرة", "1"))
-                total_family_members += family_count
-            except ValueError:
-                total_family_members += 1
+        members_count = get_members_count()
+        total_family_members = get_total_family_members()
+        deliveries_count = get_deliveries_count()
+        users_count = get_users_count()
+        assistants_count = get_assistants_count()
+        service_requests_count = get_service_requests_count()
         
         report = (
             f"📊 الإحصائيات العامة:\n\n"
-            f"👥 إجمالي المسجلين: {len(members)}\n"
+            f"👥 إجمالي المسجلين: {members_count}\n"
             f"👨‍👩‍👧‍👦 إجمالي أفراد الأسر: {total_family_members}\n"
-            f"📦 إجمالي التسليمات: {len(deliveries)}\n"
-            f"👤 إجمالي المستخدمين: {len(users)}\n"
-            f"👮 إجمالي المشرفين: {len(assistants)}\n"
-            f"📋 إجمالي طلبات الخدمات: {len(service_requests)}\n"
+            f"📦 إجمالي التسليمات: {deliveries_count}\n"
+            f"👤 إجمالي المستخدمين: {users_count}\n"
+            f"👮 إجمالي المشرفين: {assistants_count}\n"
+            f"📋 إجمالي طلبات الخدمات: {service_requests_count}\n"
         )
         
         await update.message.reply_text(report, reply_markup=stats_choice_kb())
         return States.STATS_MENU
     
     elif text == "📥 تنزيل تقرير CSV":
-        members = read_csv_file(MEMBERS_FILE)
-        total_family_members = 0
-        for member in members:
-            try:
-                family_count = int(member.get("عدد_افراد_الاسرة", "1"))
-                total_family_members += family_count
-            except ValueError:
-                total_family_members += 1
-                
-        with open(STATISTICS_FILE, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["نوع الإحصائية", "العدد"])
-            writer.writerow(["إجمالي المسجلين", len(members)])
-            writer.writerow(["إجمالي أفراد الأسر", total_family_members])
-            writer.writerow(["إجمالي التسليمات", len(read_csv_file(DELIVERIES_FILE))])
-            writer.writerow(["إجمالي المستخدمين", len(read_csv_file(USERS_FILE))])
-            writer.writerow(["إجمالي المشرفين", len(read_csv_file(ASSISTANTS_FILE))])
-            writer.writerow(["إجمالي طلبات الخدمات", len(get_service_requests_from_db())])
+        export_statistics_to_csv("statistics_report.csv")
         
         await update.message.reply_document(
-            document=open(STATISTICS_FILE, "rb"),
+            document=open("statistics_report.csv", "rb"),
             filename="statistics_report.csv",
             caption="📊 تقرير الإحصائيات"
         )
+        
+        # حذف الملف المؤقت
+        os.remove("statistics_report.csv")
         return States.STATS_MENU
     
     elif text == "🗑️ حذف الملخص":
@@ -1433,10 +1755,7 @@ async def admin_stats_choice_handler(update: Update, context: ContextTypes.DEFAU
 
 async def admin_delete_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "✅ نعم، احذف الملخص":
-        if os.path.exists(DELIVERIES_FILE):
-            os.remove(DELIVERIES_FILE)
-        ensure_csv(DELIVERIES_FILE, ["المشرف", "رقم_الجواز", "اسم_العضو", "تاريخ_التسليم"])
-        
+        delete_all_deliveries()
         delete_all_service_requests()
         
         await update.message.reply_text("✅ تم حذف جميع الإحصائيات.", reply_markup=stats_choice_kb())
@@ -1456,15 +1775,21 @@ async def manage_members_data_menu(update: Update, context: ContextTypes.DEFAULT
     text = update.message.text
     
     if text == "⬇️ تنزيل البيانات":
-        if not os.path.exists(MEMBERS_FILE) or os.stat(MEMBERS_FILE).st_size == 0:
+        members_count = get_members_count()
+        if members_count == 0:
             await update.message.reply_text("⚠️ لا توجد بيانات مسجلين حتى الآن.", reply_markup=manage_members_data_kb())
             return States.MANAGE_MEMBERS_DATA
         
+        export_members_to_csv("members.csv")
+        
         await update.message.reply_document(
-            document=open(MEMBERS_FILE, "rb"),
+            document=open("members.csv", "rb"),
             filename="members.csv",
             caption="📥 بيانات المسجلين"
         )
+        
+        # حذف الملف المؤقت
+        os.remove("members.csv")
         return States.MANAGE_MEMBERS_DATA
     
     elif text == "🗑️ مسح البيانات":
@@ -1476,27 +1801,16 @@ async def manage_members_data_menu(update: Update, context: ContextTypes.DEFAULT
         return States.CONFIRM_DELETE_MEMBERS
     
     elif text == "📊 ملخص المسجلين":
-        members = read_csv_file(MEMBERS_FILE)
-        if not members:
+        members_count = get_members_count()
+        if members_count == 0:
             await update.message.reply_text("⚠️ لا توجد بيانات مسجلين حتى الآن.", reply_markup=manage_members_data_kb())
             return States.MANAGE_MEMBERS_DATA
         
-        total = len(members)
-        total_family_members = 0
-        roles = {}
-        
-        for member in members:
-            role = member.get("الصفة", "غير محدد")
-            roles[role] = roles.get(role, 0) + 1
-            
-            try:
-                family_count = int(member.get("عدد_افراد_الاسرة", "1"))
-                total_family_members += family_count
-            except ValueError:
-                total_family_members += 1
+        total_family_members = get_total_family_members()
+        roles = get_members_by_role()
         
         report = f"📊 ملخص المسجلين:\n\n"
-        report += f"إجمالي المسجلين: {total}\n"
+        report += f"إجمالي المسجلين: {members_count}\n"
         report += f"إجمالي أفراد الأسر: {total_family_members}\n\n"
         report += f"التوزيع حسب الصفة:\n"
         for role, count in roles.items():
@@ -1513,10 +1827,10 @@ async def manage_members_data_menu(update: Update, context: ContextTypes.DEFAULT
 
 async def admin_clear_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "✅ نعم، احذف بيانات المسجلين":
-        if os.path.exists(MEMBERS_FILE):
-            os.remove(MEMBERS_FILE)
-        ensure_csv(MEMBERS_FILE, ["الاسم", "الجواز", "الهاتف", "العنوان", "الصفة", "عدد_افراد_الاسرة"])
-        await update.message.reply_text("🗑️ تم مسح جميع بيانات المسجلين.", reply_markup=manage_members_data_kb())
+        if delete_all_members():
+            await update.message.reply_text("🗑️ تم مسح جميع بيانات المسجلين.", reply_markup=manage_members_data_kb())
+        else:
+            await update.message.reply_text("⚠️ حدث خطأ في مسح البيانات.", reply_markup=manage_members_data_kb())
     else:
         await update.message.reply_text("❌ تم إلغاء حذف البيانات.", reply_markup=manage_members_data_kb())
     return States.MANAGE_MEMBERS_DATA
@@ -1537,7 +1851,7 @@ async def manage_assistants_menu(update: Update, context: ContextTypes.DEFAULT_T
         return States.CREATE_ASSISTANT_USER
     
     elif text == "🗑️ حذف مشرف":
-        assistants = read_csv_file(ASSISTANTS_FILE)
+        assistants = get_all_assistants()
         if not assistants:
             await update.message.reply_text("⚠️ لا يوجد مشرفين مسجلين.", reply_markup=assistants_management_kb())
             return States.MANAGE_ASSISTANTS
@@ -1551,7 +1865,7 @@ async def manage_assistants_menu(update: Update, context: ContextTypes.DEFAULT_T
         return States.DELETE_ASSISTANT
     
     elif text == "🔑 تغيير كلمة المرور":
-        assistants = read_csv_file(ASSISTANTS_FILE)
+        assistants = get_all_assistants()
         if not assistants:
             await update.message.reply_text("⚠️ لا يوجد مشرفين مسجلين.", reply_markup=assistants_management_kb())
             return States.MANAGE_ASSISTANTS
@@ -1565,7 +1879,7 @@ async def manage_assistants_menu(update: Update, context: ContextTypes.DEFAULT_T
         return States.CHANGE_ASSISTANT_USER
     
     elif text == "📋 كشف المشرفين":
-        assistants = read_csv_file(ASSISTANTS_FILE)
+        assistants = get_all_assistants()
         if not assistants:
             await update.message.reply_text("⚠️ لا يوجد مشرفين مسجلين.", reply_markup=assistants_management_kb())
             return States.MANAGE_ASSISTANTS
@@ -1578,15 +1892,21 @@ async def manage_assistants_menu(update: Update, context: ContextTypes.DEFAULT_T
         return States.MANAGE_ASSISTANTS
     
     elif text == "📥 تنزيل قائمة المشرفين":
-        if not os.path.exists(ASSISTANTS_FILE) or os.stat(ASSISTANTS_FILE).st_size == 0:
+        assistants_count = get_assistants_count()
+        if assistants_count == 0:
             await update.message.reply_text("⚠️ لا يوجد مشرفين مسجلين.", reply_markup=assistants_management_kb())
             return States.MANAGE_ASSISTANTS
         
+        export_assistants_to_csv("assistants.csv")
+        
         await update.message.reply_document(
-            document=open(ASSISTANTS_FILE, "rb"),
+            document=open("assistants.csv", "rb"),
             filename="assistants.csv",
             caption="📥 قائمة المشرفين"
         )
+        
+        # حذف الملف المؤقت
+        os.remove("assistants.csv")
         return States.MANAGE_ASSISTANTS
     
     elif text == "🔙 رجوع":
@@ -1601,7 +1921,8 @@ async def create_assistant_user(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("تم الإلغاء.", reply_markup=assistants_management_kb())
         return States.MANAGE_ASSISTANTS
     
-    assistants = read_csv_file(ASSISTANTS_FILE)
+    # التحقق من عدم وجود المستخدم مسبقاً
+    assistants = get_all_assistants()
     if any(a.get("username") == new_user for a in assistants):
         await update.message.reply_text("⚠️ اسم المستخدم موجود مسبقاً. اختر اسمًا آخر:", reply_markup=cancel_or_back_kb())
         return States.CREATE_ASSISTANT_USER
@@ -1620,12 +1941,18 @@ async def create_assistant_pass(update: Update, context: ContextTypes.DEFAULT_TY
         return States.MANAGE_ASSISTANTS
     
     new_user = context.user_data.get("new_assistant_user")
-    append_csv_row(ASSISTANTS_FILE, {"username": new_user, "password": new_pass}, ["username", "password"])
     
-    await update.message.reply_text(
-        f"✅ تم إضافة المشرف {new_user} بنجاح.",
-        reply_markup=assistants_management_kb()
-    )
+    if add_assistant(new_user, new_pass):
+        await update.message.reply_text(
+            f"✅ تم إضافة المشرف {new_user} بنجاح.",
+            reply_markup=assistants_management_kb()
+        )
+    else:
+        await update.message.reply_text(
+            f"⚠️ فشل إضافة المشرف {new_user}.",
+            reply_markup=assistants_management_kb()
+        )
+    
     return States.MANAGE_ASSISTANTS
 
 async def delete_assistant_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1634,14 +1961,17 @@ async def delete_assistant_menu(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("تم الإلغاء.", reply_markup=assistants_management_kb())
         return States.MANAGE_ASSISTANTS
     
-    assistants = read_csv_file(ASSISTANTS_FILE)
-    updated_assistants = [a for a in assistants if a.get("username") != assistant_to_delete]
-    write_csv_file(ASSISTANTS_FILE, updated_assistants, ["username", "password"])
+    if delete_assistant(assistant_to_delete):
+        await update.message.reply_text(
+            f"✅ تم حذف المشرف {assistant_to_delete} بنجاح.",
+            reply_markup=assistants_management_kb()
+        )
+    else:
+        await update.message.reply_text(
+            f"⚠️ فشل حذف المشرف {assistant_to_delete}.",
+            reply_markup=assistants_management_kb()
+        )
     
-    await update.message.reply_text(
-        f"✅ تم حذف المشرف {assistant_to_delete} بنجاح.",
-        reply_markup=assistants_management_kb()
-    )
     return States.MANAGE_ASSISTANTS
 
 async def get_new_password_for_assistant(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1654,7 +1984,7 @@ async def get_new_password_for_assistant(update: Update, context: ContextTypes.D
     await update.message.reply_text("🔐 أدخل كلمة المرور الجديدة:", reply_markup=cancel_or_back_kb())
     return States.CHANGE_ASSISTANT_PASS
 
-async def update_assistant_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def update_assistant_password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_password = update.message.text.strip()
     if new_password == "🔙 رجوع":
         return await get_new_password_for_assistant(update, context)
@@ -1663,18 +1993,18 @@ async def update_assistant_password(update: Update, context: ContextTypes.DEFAUL
         return States.MANAGE_ASSISTANTS
     
     user_to_change = context.user_data.get("change_pass_user")
-    assistants = read_csv_file(ASSISTANTS_FILE)
     
-    for assistant in assistants:
-        if assistant.get("username") == user_to_change:
-            assistant["password"] = new_password
+    if update_assistant_password(user_to_change, new_password):
+        await update.message.reply_text(
+            f"✅ تم تغيير كلمة المرور للمشرف {user_to_change} بنجاح.",
+            reply_markup=assistants_management_kb()
+        )
+    else:
+        await update.message.reply_text(
+            f"⚠️ فشل تغيير كلمة المرور للمشرف {user_to_change}.",
+            reply_markup=assistants_management_kb()
+        )
     
-    write_csv_file(ASSISTANTS_FILE, assistants, ["username", "password"])
-    
-    await update.message.reply_text(
-        f"✅ تم تغيير كلمة المرور للمشرف {user_to_change} بنجاح.",
-        reply_markup=assistants_management_kb()
-    )
     return States.MANAGE_ASSISTANTS
 
 # =========================
@@ -1689,15 +2019,21 @@ async def manage_delivery_reports_menu(update: Update, context: ContextTypes.DEF
     text = update.message.text
     
     if text == "⬇️ تنزيل الكشوفات":
-        if not os.path.exists(DELIVERIES_FILE) or os.stat(DELIVERIES_FILE).st_size == 0:
+        deliveries_count = get_deliveries_count()
+        if deliveries_count == 0:
             await update.message.reply_text("⚠️ لا توجد كشوفات تسليم حتى الآن.", reply_markup=delivery_reports_kb())
             return States.MANAGE_DELIVERY_REPORTS
         
+        export_deliveries_to_csv("deliveries.csv")
+        
         await update.message.reply_document(
-            document=open(DELIVERIES_FILE, "rb"),
+            document=open("deliveries.csv", "rb"),
             filename="deliveries.csv",
             caption="📥 كشوفات التسليم"
         )
+        
+        # حذف الملف المؤقت
+        os.remove("deliveries.csv")
         return States.MANAGE_DELIVERY_REPORTS
     
     elif text == "🗑️ حذف الكشوفات":
@@ -1709,19 +2045,15 @@ async def manage_delivery_reports_menu(update: Update, context: ContextTypes.DEF
         return States.CONFIRM_DELETE_DELIVERIES
     
     elif text == "📊 عرض الملخص":
-        deliveries = read_csv_file(DELIVERIES_FILE)
-        if not deliveries:
+        deliveries_count = get_deliveries_count()
+        if deliveries_count == 0:
             await update.message.reply_text("⚠️ لا توجد كشوفات تسليم حتى الآن.", reply_markup=delivery_reports_kb())
             return States.MANAGE_DELIVERY_REPORTS
         
-        total = len(deliveries)
-        assistants = {}
-        for delivery in deliveries:
-            assistant = delivery.get("المشرف", "غير معروف")
-            assistants[assistant] = assistants.get(assistant, 0) + 1
+        assistants_deliveries = get_deliveries_by_assistant_count()
         
-        report = f"📊 ملخص التسليمات:\n\nإجمالي التسليمات: {total}\n\nالتوزيع حسب المشرف:\n"
-        for assistant, count in assistants.items():
+        report = f"📊 ملخص التسليمات:\n\nإجمالي التسليمات: {deliveries_count}\n\nالتوزيع حسب المشرف:\n"
+        for assistant, count in assistants_deliveries.items():
             report += f"- {assistant}: {count}\n"
         
         await update.message.reply_text(report, reply_markup=delivery_reports_kb())
@@ -1735,10 +2067,10 @@ async def manage_delivery_reports_menu(update: Update, context: ContextTypes.DEF
 
 async def delete_delivery_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "✅ نعم، احذف الكشوفات":
-        if os.path.exists(DELIVERIES_FILE):
-            os.remove(DELIVERIES_FILE)
-        ensure_csv(DELIVERIES_FILE, ["المشرف", "رقم_الجواز", "اسم_العضو", "تاريخ_التسليم"])
-        await update.message.reply_text("✅ تم حذف جميع كشوفات التسليم.", reply_markup=delivery_reports_kb())
+        if delete_all_deliveries():
+            await update.message.reply_text("✅ تم حذف جميع كشوفات التسليم.", reply_markup=delivery_reports_kb())
+        else:
+            await update.message.reply_text("⚠️ حدث خطأ في حذف الكشوفات.", reply_markup=delivery_reports_kb())
     else:
         await update.message.reply_text("❌ تم إلغاء حذف الكشوفات.", reply_markup=delivery_reports_kb())
     return States.MANAGE_DELIVERY_REPORTS
@@ -1753,8 +2085,7 @@ async def record_delivery_process(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("تم الإلغاء.", reply_markup=assistant_menu_kb())
         return States.ASSISTANT_MENU
     
-    members = read_csv_file(MEMBERS_FILE)
-    member = next((m for m in members if m.get("الجواز") == passport), None)
+    member = get_member_by_passport(passport)
     
     if not member:
         await update.message.reply_text("⚠️ لم يتم العثور على العضو. تأكد من رقم الجواز.", reply_markup=cancel_or_back_kb())
@@ -1792,21 +2123,17 @@ async def record_delivery_confirm(update: Update, context: ContextTypes.DEFAULT_
         name = context.user_data.get("pending_delivery_name")
         assistant_user = context.user_data.get("login_user")
         
-        append_csv_row(
-            DELIVERIES_FILE,
-            {
-                "المشرف": assistant_user,
-                "رقم_الجواز": passport,
-                "اسم_العضو": name,
-                "تاريخ_التسليم": datetime.now().strftime("%Y-%m-%d %H:%M")
-            },
-            ["المشرف", "رقم_الجواز", "اسم_العضو", "تاريخ_التسليم"]
-        )
+        if add_delivery(assistant_user, passport, name):
+            await update.message.reply_text(
+                "✅ تم تسجيل التسليم بنجاح.",
+                reply_markup=assistant_menu_kb()
+            )
+        else:
+            await update.message.reply_text(
+                "⚠️ حدث خطأ في تسجيل التسليم.",
+                reply_markup=assistant_menu_kb()
+            )
         
-        await update.message.reply_text(
-            "✅ تم تسجيل التسليم بنجاح.",
-            reply_markup=assistant_menu_kb()
-        )
         return States.ASSISTANT_MENU
     else:
         await update.message.reply_text("❌ تم إلغاء التسجيل.", reply_markup=assistant_menu_kb())
@@ -1819,8 +2146,7 @@ async def assistant_view_deliveries_handler(update: Update, context: ContextType
     
     text = update.message.text
     assistant_user = context.user_data.get("login_user")
-    deliveries = read_csv_file(DELIVERIES_FILE)
-    assistant_deliveries = [d for d in deliveries if d.get("المشرف") == assistant_user]
+    assistant_deliveries = get_deliveries_by_assistant(assistant_user)
     
     if text == "📥 تحميل":
         if not assistant_deliveries:
@@ -1828,10 +2154,7 @@ async def assistant_view_deliveries_handler(update: Update, context: ContextType
             return States.ASSISTANT_VIEW_DELIVERIES
         
         temp_filename = f"{assistant_user}_deliveries.csv"
-        with open(temp_filename, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["المشرف", "رقم_الجواز", "اسم_العضو", "تاريخ_التسليم"])
-            writer.writeheader()
-            writer.writerows(assistant_deliveries)
+        export_assistant_deliveries_to_csv(assistant_user, temp_filename)
         
         await update.message.reply_document(
             document=open(temp_filename, "rb"),
@@ -1839,6 +2162,7 @@ async def assistant_view_deliveries_handler(update: Update, context: ContextType
             caption="📥 كشوفات التسليم"
         )
         
+        # حذف الملف المؤقت
         os.remove(temp_filename)
         return States.ASSISTANT_VIEW_DELIVERIES
     
@@ -1887,7 +2211,7 @@ async def back_to_admin_only(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def main():
     # تهيئة قاعدة البيانات
-    init_services_db()
+    init_database()
     
     # إنشاء التطبيق
     persistence = PicklePersistence(filepath="conversationbot")
@@ -1940,7 +2264,7 @@ def main():
             States.CREATE_ASSISTANT_PASS: [MessageHandler(filters.TEXT & ~filters.Text(["❌ إلغاء", "🔙 رجوع"]), create_assistant_pass)],
             States.DELETE_ASSISTANT: [MessageHandler(filters.TEXT & ~filters.Text(["🔙 رجوع"]), delete_assistant_menu)],
             States.CHANGE_ASSISTANT_USER: [MessageHandler(filters.TEXT & ~filters.Text(["🔙 رجوع"]), get_new_password_for_assistant)],
-            States.CHANGE_ASSISTANT_PASS: [MessageHandler(filters.TEXT & ~filters.Text(["❌ إلغاء", "🔙 رجوع"]), update_assistant_password)],
+            States.CHANGE_ASSISTANT_PASS: [MessageHandler(filters.TEXT & ~filters.Text(["❌ إلغاء", "🔙 رجوع"]), update_assistant_password_handler)],
             States.MANAGE_MEMBERS_DATA: [MessageHandler(filters.TEXT, manage_members_data_menu)],
             States.CONFIRM_DELETE_MEMBERS: [MessageHandler(filters.TEXT, admin_clear_members)],
             States.MANAGE_DELIVERY_REPORTS: [MessageHandler(filters.TEXT, manage_delivery_reports_menu)],
@@ -1961,7 +2285,7 @@ def main():
             States.RECORD_DELIVERY_PASSPORT: [MessageHandler(filters.TEXT & ~filters.Text(["❌ إلغاء", "🔙 رجوع"]), record_delivery_process)],
             States.CONFIRM_DELIVERY: [MessageHandler(filters.TEXT, record_delivery_confirm)],
             States.ASSISTANT_VIEW_DELIVERIES: [MessageHandler(filters.TEXT, assistant_view_deliveries_handler)],
-        },
+        ],
         fallbacks=[
             MessageHandler(filters.Text(["❌ إلغاء"]), go_main_menu),
             MessageHandler(filters.Text(["🔙 رجوع"]), back_to_admin_only)
@@ -1988,7 +2312,6 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, show_admin_login))
     
     # بدء البوت
-    print("🤖 البوت يعمل الآن...")
     application.run_polling()
 
 if __name__ == "__main__":
